@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PAT App</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- TRANG LOGIN -->
+        <section id="login-screen" class="screen active">
+            <div class="login-wrapper">
+                <div class="logo-container">
+                    <div class="logo">
+                        <i class="fa-solid fa-leaf"></i>
+                    </div>
+                </div>
+                
+                <div class="welcome-text">
+                    <h1>Chào mừng trở lại</h1>
+                    <p>Đăng nhập để tiếp tục khám phá</p>
+                </div>
+
+                <form class="login-form" id="loginForm">
+                    <div class="input-group">
+                        <label>Số điện thoại hoặc email</label>
+                        <input type="text" placeholder="Nhập số điện thoại hoặc email" id="username" required>
+                    </div>
+
+                    <div class="input-group">
+                        <label>Mật khẩu</label>
+                        <div class="password-input">
+                            <input type="password" placeholder="••••••••••••" id="password" required>
+                            <i class="fa-regular fa-eye" id="togglePassword"></i>
+                        </div>
+                    </div>
+
+                    <a href="#" class="forgot-password">Quên mật khẩu?</a>
+
+                    <button type="submit" class="btn-primary">Đăng nhập</button>
+                </form>
+
+                <div class="social-login">
+                    <p>Hoặc đăng nhập bằng</p>
+                    <div class="social-icons">
+                        <button class="social-btn"><i class="fa-brands fa-google"></i></button>
+                        <button class="social-btn"><i class="fa-brands fa-apple"></i></button>
+                        <button class="social-btn"><i class="fa-brands fa-facebook-f"></i></button>
+                    </div>
+                </div>
+
+                <div class="register-link">
+                    <p>Chưa có tài khoản? <a href="#">Đăng ký ngay</a></p>
+                </div>
+            </div>
+        </section>
+
+        <!-- TRANG MAIN (App Container after login) -->
+        <section id="main-screen" class="screen">
+            
+            <!-- TAB: VƯỜN -->
+            <div class="tab-content active" id="tab-vuon">
+                <div class="main-wrapper">
+                
+                <!-- Header Status -->
+                <div class="top-status">
+                    <div class="streak-badge">
+                        <i class="fa-solid fa-fire" style="color: #ff6b6b;"></i> 17 NGÀY
+                    </div>
+                </div>
+
+                <!-- Pet Info -->
+                <div class="pet-header">
+                    <h2>Bé Mập</h2>
+                    <div class="pet-stage">
+                        <i class="fa-solid fa-leaf"></i> Cây non (Ngày 12)
+                    </div>
+                    <div class="pet-tags">
+                        <span class="tag-good"><i class="fa-solid fa-heart"></i> Tươi tốt</span>
+                        <span class="tag-thirsty"><i class="fa-solid fa-droplet"></i> Đang khát</span>
+                    </div>
+                </div>
+
+                <!-- Pet Avatar -->
+                <div class="pet-avatar-container">
+                    <div class="pet-character">
+                        <div class="pot">
+                            <div class="face">
+                                <div class="eye left"></div>
+                                <div class="eye right"></div>
+                                <div class="mouth"></div>
+                            </div>
+                        </div>
+                        <div class="plant-head">
+                            <div class="leaf leaf-left"></div>
+                            <div class="leaf leaf-top"></div>
+                            <div class="leaf leaf-right"></div>
+                        </div>
+                    </div>
+                    <div class="shadow"></div>
+                </div>
+
+                <!-- Progress Bar -->
+                <div class="progress-section">
+                    <div class="progress-bar-bg">
+                        <div class="progress-bar-fill" style="width: 62%;"></div>
+                    </div>
+                    <p class="progress-text">62% &rarr; Cây trưởng thành</p>
+                    <div class="progress-dots">
+                        <span class="dot active"></span>
+                        <span class="dot"></span>
+                        <span class="dot"></span>
+                    </div>
+                </div>
+
+                <!-- AR Button & Media -->
+                <div class="ar-btn-container" style="display: flex; gap: 10px;">
+                    <button class="btn-ar">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> Bắt Thú AR
+                    </button>
+                    <button class="btn-media" style="background-color: var(--blue); color: white; border: none; padding: 8px 16px; border-radius: 20px; font-size: 13px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 10px rgba(77, 171, 247, 0.3); transition: all 0.3s;">
+                        <i class="fa-solid fa-video"></i> Time-lapse
+                    </button>
+                </div>
+
+                <!-- Chat Bubble -->
+                <div class="chat-bubble">
+                    <div class="chat-header">
+                        <strong>Bé Mập</strong> <i class="fa-regular fa-comment-dots"></i>
+                    </div>
+                    <p>"Hôm nay lá hơi rũ nha sếp! Cho tui xin tí nước nào~ 💧"</p>
+                </div>
+
+                <!-- Daily Task -->
+                <div class="daily-task">
+                    <div class="task-icon">
+                        <i class="fa-solid fa-sparkles"></i>
+                    </div>
+                    <div class="task-info">
+                        <h4>Nhiệm vụ hôm nay</h4>
+                        <p>Chụp 1 ảnh check-in nhận thưởng</p>
+                    </div>
+                    <div class="task-reward">
+                        +50 Imprint
+                    </div>
+                </div> <!-- END daily-task -->
+
+            </div> <!-- END main-wrapper -->
+        </div> <!-- END TAB VƯỜN -->
+
+            <!-- TAB: TÚI ĐỒ (Pet) -->
+            <div class="tab-content" id="tab-tuido">
+                <div class="main-wrapper tuido-wrapper">
+                    <div class="tuido-header">
+                        <h2>Khu Rừng Nhỏ 🐞</h2>
+                        <p>Đã thu thập: 12/50 loài</p>
+                        <div class="tuido-progress">
+                            <div class="tuido-progress-fill" style="width: 24%;"></div>
+                        </div>
+                    </div>
+                    
+                    <div class="tuido-filters">
+                        <button class="filter-btn active">Tất cả</button>
+                        <button class="filter-btn">Hiếm</button>
+                        <button class="filter-btn">Hệ Chiến</button>
+                        <button class="filter-btn">Hỗ trợ</button>
+                    </div>
+
+                    <div class="tuido-grid">
+                        <div class="tuido-card card-fire">
+                            <div class="card-badges">
+                                <span class="badge-lv bg-orange">Lv.15</span>
+                                <i class="fa-solid fa-fire text-orange"></i>
+                            </div>
+                            <div class="card-icon">
+                                <div class="ladybug-body"><div class="dot d1"></div><div class="dot d2"></div><div class="dot d3"></div></div>
+                                <div class="card-shadow"></div>
+                            </div>
+                            <h4>Bọ Rùa Lửa</h4>
+                            <div class="card-buff buff-green"><i class="fa-solid fa-sparkles"></i> +12% Sức mạnh</div>
+                        </div>
+                        
+                        <div class="tuido-card card-leaf">
+                            <div class="card-badges">
+                                <span class="badge-lv bg-blue">Lv.08</span>
+                                <i class="fa-solid fa-leaf text-green"></i>
+                            </div>
+                            <div class="card-icon">
+                                <div class="caterpillar-body"><div class="seg s1"></div><div class="seg s2"></div><div class="seg s3"></div></div>
+                                <div class="card-shadow"></div>
+                            </div>
+                            <h4>Sâu Phàm Ăn</h4>
+                            <div class="card-buff buff-gray">Chưa có Buff</div>
+                        </div>
+                        
+                        <div class="tuido-card card-electric">
+                            <div class="card-badges">
+                                <span class="badge-lv bg-purple">Lv.12</span>
+                                <i class="fa-solid fa-bolt text-yellow"></i>
+                            </div>
+                            <div class="card-icon">
+                                <div class="bee-body"><div class="stripe"></div><div class="stripe s2"></div><div class="wing w1"></div><div class="wing w2"></div></div>
+                                <div class="card-shadow"></div>
+                            </div>
+                            <h4>Ong Thợ Săn</h4>
+                            <div class="card-buff buff-green"><i class="fa-solid fa-sparkles"></i> +5% Tốc độ</div>
+                        </div>
+                        
+                        <div class="tuido-card card-locked">
+                            <div class="card-icon">
+                                <div class="locked-icon">?</div>
+                                <div class="locked-shape"></div>
+                            </div>
+                            <h4 class="text-muted">Chưa khám phá</h4>
+                            <div class="card-buff locked-hint">Gợi ý: Cây thiếu nước</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB: BATTLE -->
+            <div class="tab-content" id="tab-battle">
+                <div class="main-wrapper battle-wrapper">
+                    <div class="battle-header">
+                        <div>
+                            <h2>Ải Thảo Mộc <i class="fa-solid fa-leaf text-green"></i></h2>
+                            <p>Chương 1: Khu Vườn Ban Công</p>
+                        </div>
+                        <div class="energy-badge">
+                            <i class="fa-solid fa-bolt text-yellow"></i> 24/30
+                        </div>
+                    </div>
+
+                    <div class="battle-map">
+                        <svg class="map-path" viewBox="0 0 300 200">
+                            <path d="M 60 170 Q 150 120 230 110 T 120 40 Q 70 30 200 20" fill="none" stroke="#e2e8f0" stroke-width="8" stroke-dasharray="10,10" />
+                        </svg>
+                        <div class="map-node node-done" style="bottom: 15px; left: 30px;">
+                            <span>1-1</span>
+                            <div class="node-stars"><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i></div>
+                        </div>
+                        <div class="map-node node-done" style="bottom: 75px; right: 40px;">
+                            <span>1-2</span>
+                            <div class="node-stars"><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i></div>
+                        </div>
+                        <div class="map-node node-current" style="top: 50px; left: 70px;">
+                            <span>1-3</span>
+                            <div class="node-fail"><i class="fa-solid fa-xmark"></i></div>
+                        </div>
+                        <div class="map-node node-boss" style="top: 15px; right: 50px;">
+                            <i class="fa-solid fa-crown text-yellow"></i>
+                            <div class="boss-label">BOSS</div>
+                        </div>
+                    </div>
+
+                    <div class="battle-panel">
+                        <div class="panel-header">
+                            <h3>Ải 1-3: Đầm Lầy Sâu Bướm</h3>
+                            <span class="power-req">Cần 1.200 LC</span>
+                        </div>
+                        
+                        <div class="panel-buff">
+                            <div class="buff-icon"><i class="fa-solid fa-seedling text-orange"></i></div>
+                            <div class="buff-info">
+                                <strong>Bé Mập (Imprint Lv.2)</strong>
+                                <p>Hào quang: +15% Công Hệ Lửa</p>
+                            </div>
+                            <div class="buff-status">ĐANG BUFF</div>
+                        </div>
+
+                        <div class="panel-team">
+                            <div class="team-card">
+                                <div class="team-icon bg-orange-light"><i class="fa-solid fa-bug text-orange"></i></div>
+                                <div class="team-info">
+                                    <strong>Bọ Rùa Lửa</strong>
+                                    <span class="team-stats text-orange">Lv.15 • 780 LC</span>
+                                    <span class="team-buff text-green">+117 Buff 🪴</span>
+                                </div>
+                            </div>
+                            <div class="team-card">
+                                <div class="team-icon bg-yellow-light"><i class="fa-solid fa-bug text-yellow"></i></div>
+                                <div class="team-info">
+                                    <strong>Ong Thợ Săn</strong>
+                                    <span class="team-stats text-yellow">Lv.12 • 590 LC</span>
+                                    <span class="team-buff text-muted">Không hợp hệ</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button class="btn-primary" style="width: 100%; margin-top: 16px;">CHIẾN ĐẤU (<i class="fa-solid fa-bolt text-yellow"></i> -5)</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB: HỒ SƠ (Setting) -->
+            <div class="tab-content" id="tab-hoso">
+                <div class="main-wrapper setting-wrapper">
+                    <div class="profile-card">
+                        <div class="profile-avatar">
+                            <i class="fa-solid fa-user"></i>
+                        </div>
+                        <div class="profile-info">
+                            <h2>Lâm Chill</h2>
+                            <span class="profile-title">Nông dân Ban Công Lv.4</span>
+                            <p>Tổng số cây: 3 • Streak: 17 ngày</p>
+                        </div>
+                    </div>
+
+                    <div class="setting-section">
+                        <h4 class="section-title">TÍNH NĂNG ĐỘC BẢN</h4>
+                        <div class="setting-item">
+                            <div class="setting-icon"><i class="fa-solid fa-clapperboard"></i></div>
+                            <div class="setting-content">
+                                <strong>Kho Video Kỷ Niệm (Time-lapse)</strong>
+                                <p>Đã sẵn sàng 1 video đề xuất</p>
+                            </div>
+                            <i class="fa-solid fa-chevron-right text-muted"></i>
+                        </div>
+                        <div class="setting-item">
+                            <div class="setting-icon"><i class="fa-solid fa-masks-theater"></i></div>
+                            <div class="setting-content">
+                                <strong>Tính cách cây (AI Tone)</strong>
+                                <p class="text-green">Gen Z dí dỏm, mặn mòi</p>
+                            </div>
+                            <i class="fa-solid fa-chevron-right text-muted"></i>
+                        </div>
+                    </div>
+
+                    <div class="setting-section">
+                        <h4 class="section-title">HỆ THỐNG & AR</h4>
+                        <div class="setting-item">
+                            <div class="setting-icon"><i class="fa-regular fa-clock"></i></div>
+                            <div class="setting-content">
+                                <strong>Nhắc điểm danh & Tưới cây</strong>
+                                <p>Mỗi sáng lúc 08:00 AM</p>
+                            </div>
+                            <div class="toggle active"><div class="toggle-knob"></div></div>
+                        </div>
+                        <div class="setting-item">
+                            <div class="setting-icon"><i class="fa-solid fa-battery-half"></i></div>
+                            <div class="setting-content">
+                                <strong>Chế độ AR nhẹ (Giảm lag máy)</strong>
+                                <p>Tắt hiệu ứng bóng đổ phức tạp</p>
+                            </div>
+                            <div class="toggle"><div class="toggle-knob"></div></div>
+                        </div>
+                        <div class="setting-item">
+                            <div class="setting-icon"><i class="fa-solid fa-music"></i></div>
+                            <div class="setting-content">
+                                <strong>Nhạc nền Lofi thư giãn</strong>
+                            </div>
+                            <div class="toggle active"><div class="toggle-knob"></div></div>
+                        </div>
+                    </div>
+
+                    <button class="btn-logout">Đăng xuất tài khoản</button>
+                    <p class="app-version">PAT AR • v1.0.2 (Build 2026)</p>
+                </div>
+            </div>
+
+            <!-- Bottom Navigation -->
+            <nav class="bottom-nav">
+                <a href="#tab-vuon" class="nav-item active" data-tab="tab-vuon">
+                    <i class="fa-solid fa-seedling" style="margin-bottom: 4px; font-size: 16px;"></i>
+                    <span>Vườn</span>
+                    <div class="nav-dot"></div>
+                </a>
+                <a href="#tab-tuido" class="nav-item" data-tab="tab-tuido">
+                    <i class="fa-solid fa-book-journal-whills" style="margin-bottom: 4px; font-size: 16px;"></i>
+                    <span>Túi đồ</span>
+                </a>
+                <div class="nav-cam-btn">
+                    <div class="cam-ring">
+                        <div class="cam-inner">
+                            <i class="fa-solid fa-camera"></i>
+                        </div>
+                    </div>
+                </div>
+                <a href="#tab-battle" class="nav-item" data-tab="tab-battle">
+                    <i class="fa-solid fa-khanda" style="margin-bottom: 4px; font-size: 16px;"></i>
+                    <span>Battle</span>
+                </a>
+                <a href="#tab-hoso" class="nav-item" data-tab="tab-hoso">
+                    <i class="fa-solid fa-user" style="margin-bottom: 4px; font-size: 16px;"></i>
+                    <span>Hồ sơ</span>
+                </a>
+            </nav>
+        </section>
+    </div>
+
+    <script src="./js/app.js"></script>
+</body>
+</html>

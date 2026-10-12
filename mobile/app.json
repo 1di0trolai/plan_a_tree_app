@@ -1,0 +1,58 @@
+{
+  "expo": {
+    "name": "PAT",
+    "slug": "pat-plant-adventure",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "pat",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F5F3EB",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.pat.plantadventure"
+    },
+    "android": {
+      "package": "com.pat.plantadventure",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundImage": "./assets/images/android-icon-background.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": true
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#F5F3EB"
+        }
+      ],
+      "expo-sqlite",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "PAT cần quyền Camera để bạn check-in cây thật và săn thú AR quanh cây.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "PAT cần quyền truy cập thư viện ảnh để bạn chọn ảnh check-in cho cây.",
+          "cameraPermission": "PAT cần quyền Camera để bạn chụp ảnh check-in cho cây thật.",
+          "microphonePermission": false
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

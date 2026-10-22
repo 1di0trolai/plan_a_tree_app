@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { useRef, useState, type ComponentProps, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -30,16 +30,8 @@ import type { Plant, PlantChibi } from '@/types/app';
 type SheetName = 'care' | 'history' | 'timelapse' | null;
 
 const PALETTE = {
-  background: COLORS.background ?? '#F6F7EF',
-  surface: COLORS.surface ?? '#FFFFFF',
-  primary: COLORS.primary ?? '#407A52',
-  primaryDark: COLORS.primaryDark ?? '#285D3A',
+  ...COLORS,
   primarySoft: '#DDECD8',
-  text: COLORS.text ?? '#1F2B22',
-  textMuted: COLORS.textMuted ?? '#748078',
-  border: COLORS.border ?? '#E4E8DF',
-  warning: COLORS.warning ?? '#F1A340',
-  white: '#FFFFFF',
 };
 
 const PLANT_EMOJIS = ['🌿', '🪴', '🌵', '🌻', '🍀', '🌱'];
@@ -136,6 +128,11 @@ export default function GardenScreen() {
   const checkedInToday = activePlant?.lastCheckIn === localDateKey();
   const arUsedToday = state.daily.lastCatchDate === localDateKey();
 
+  // The active plant can also change from Profile or after adding/removing a plant.
+  useEffect(() => {
+    plantListRef.current?.scrollToOffset({ offset: width * activePlantIndex, animated: false });
+  }, [activePlantIndex, width, plants.length]);
+
   const resetAddForm = () => {
     setPlantName('');
     setPlantSpecies('');
@@ -226,7 +223,6 @@ export default function GardenScreen() {
             pagingEnabled
             ref={plantListRef}
             showsHorizontalScrollIndicator={false}
-            style={{ marginHorizontal: -SPACING.lg }}
             renderItem={({ item }) => {
               const chibi = state.plantChibis.find((entry) => entry.plantId === item.id);
               return (

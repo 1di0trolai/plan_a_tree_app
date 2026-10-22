@@ -1,0 +1,22 @@
+{
+  "name": "pat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PAT mobile prototype and SQL Server database tools",
+  "engines": { "node": ">=24.0.0" },
+  "scripts": {
+    "start": "npm --prefix mobile start",
+    "android": "npm --prefix mobile run android",
+    "ios": "npm --prefix mobile run ios",
+    "lint": "npm --prefix mobile run lint",
+    "typecheck": "npm --prefix mobile run typecheck",
+    "test": "npm --prefix mobile test",
+    "check": "npm run lint && npm run typecheck && npm test",
+    "db:check": "node database/test-db.js"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.8",
+    "msnodesqlv8": "^5.6.0",
+    "mssql": "^12.7.10"
+  }
+}

@@ -16,13 +16,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useApp } from '@/store/AppStore';
+import { isIdentityValid } from '@/utils/validation';
 
 type AuthMode = 'login' | 'register' | 'forgot';
-
-const isIdentityValid = (value: string) => {
-  const normalized = value.trim().replace(/[\s.-]/g, '');
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()) || /^(?:\+?84|0)\d{9}$/.test(normalized);
-};
 
 export default function AuthScreen() {
   const { ready, state, login, register, forgotPassword } = useApp();
@@ -53,8 +49,8 @@ export default function AuthScreen() {
 
   const submit = async () => {
     setMessage(null);
-    if (!isIdentityValid(identity)) {
-      setMessage({ type: 'error', text: 'Hãy nhập email hoặc số điện thoại hợp lệ.' });
+    if (!isIdentityValid(identity) || (mode !== 'login' && !identity.trim().includes('@'))) {
+      setMessage({ type: 'error', text: mode === 'login' ? 'Hãy nhập email hoặc số điện thoại hợp lệ.' : 'Hãy nhập email hợp lệ.' });
       return;
     }
     if (mode !== 'forgot' && password.length < 6) {

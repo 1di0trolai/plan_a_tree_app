@@ -1,8 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Redirect, Tabs } from 'expo-router';
+import { Tabs } from 'expo-router';
 import type { ComponentProps } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
-import { useApp } from '@/store/AppStore';
+import { Pressable, Text, View } from 'react-native';
 
 type IconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -15,18 +14,6 @@ const ICONS: Record<string, { active: IconName; inactive: IconName }> = {
 };
 
 export default function TabLayout() {
-  const { ready, state } = useApp();
-
-  if (!ready) {
-    return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F5F3EB' }}>
-        <ActivityIndicator color="#246B4A" size="large" />
-      </View>
-    );
-  }
-
-  if (!state.auth.loggedIn) return <Redirect href="/" />;
-
   return (
     <Tabs
       initialRouteName="garden"

@@ -1,0 +1,13 @@
+# Dependency directories
+node_modules/
+
+# IDE and Editor folders
+.vs/
+.vscode/
+*.slnx
+
+# Environment variables
+.env
+
+# Database logs/local files (tuỳ chọn)
+*.sqlite

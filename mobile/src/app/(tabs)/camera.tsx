@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -17,16 +17,23 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useApp } from '@/store/AppStore';
 import { theme } from '@/theme';
 import type { Analysis, CaptureSource } from '@/types/app';
+import { deleteCheckInPhoto, persistCheckInPhoto } from '@/utils/checkInPhotos';
 
 type CameraStep = 'capture' | 'preview' | 'analyzing' | 'result';
 
 export default function CheckInCameraScreen() {
+  const { activePlant } = useApp();
+  return <PlantCamera key={activePlant.id} />;
+}
+
+function PlantCamera() {
   const { ready, state, activePlant, setActivePlantIndex, checkIn } = useApp();
   const [step, setStep] = useState<CameraStep>('capture');
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [source, setSource] = useState<CaptureSource>('library');
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [firstToday, setFirstToday] = useState(false);
+  const savingRef = useRef(false);
   const activeChibi = state.plantChibis.find((entry) => entry.plantId === activePlant?.id);
 
   const resetCapture = () => {
@@ -37,7 +44,6 @@ export default function CheckInCameraScreen() {
 
   const choosePlant = (index: number) => {
     setActivePlantIndex(index);
-    resetCapture();
   };
 
   const receiveImage = (uri: string, nextSource: CaptureSource) => {
@@ -82,14 +88,27 @@ export default function CheckInCameraScreen() {
     }
   };
 
-  const analyzePhoto = async () => {
-    if (!activePlant || !imageUri) return;
+  const analyzePhoto = () => {
+    if (!activePlant || !imageUri || savingRef.current) return;
+    savingRef.current = true;
     setStep('analyzing');
-    await new Promise((resolve) => setTimeout(resolve, 1200));
-    const result = checkIn({ plantId: activePlant.id, imageUri, source });
-    setAnalysis(result.analysis);
-    setFirstToday(result.firstToday);
-    setStep('result');
+    let savedUri: string | null = null;
+    try {
+      savedUri = persistCheckInPhoto(imageUri);
+      const result = checkIn({ plantId: activePlant.id, imageUri: savedUri, source });
+      setImageUri(savedUri);
+      setAnalysis(result.analysis);
+      setFirstToday(result.firstToday);
+      setStep('result');
+    } catch (error) {
+      if (savedUri) {
+        try { deleteCheckInPhoto(savedUri); } catch { /* Retry keeps the original picker image. */ }
+      }
+      setStep('preview');
+      Alert.alert('Chưa lưu được check-in', error instanceof Error ? error.message : 'Hãy kiểm tra dung lượng thiết bị rồi thử lại.');
+    } finally {
+      savingRef.current = false;
+    }
   };
 
   if (!ready) {
@@ -128,6 +147,7 @@ export default function CheckInCameraScreen() {
                 accessibilityRole="button"
                 accessibilityState={{ selected }}
                 key={plant.id}
+                disabled={step === 'analyzing'}
                 onPress={() => choosePlant(index)}
                 style={[styles.plantChip, selected && styles.plantChipSelected]}>
                 <Text style={styles.plantChipEmoji}>{chibi?.fallbackEmoji ?? '🪴'}</Text>

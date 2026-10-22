@@ -1,9 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { localDateKey } from '@/data/seed';
@@ -12,6 +12,7 @@ import { theme } from '@/theme';
 import type { Beast } from '@/types/app';
 
 type HuntStep = 'ready' | 'scanning' | 'result';
+const SCAN_DURATION_MS = 10000;
 
 export default function ArHuntScreen() {
   const { plantId } = useLocalSearchParams<{ plantId?: string }>();
@@ -20,58 +21,73 @@ export default function ArHuntScreen() {
   const [step, setStep] = useState<HuntStep>('ready');
   const [progress, setProgress] = useState(0);
   const [caught, setCaught] = useState<{ beast: Beast; isNew: boolean } | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completingRef = useRef(false);
+  const [focused, setFocused] = useState(false);
+  const [appActive, setAppActive] = useState(AppState.currentState === 'active');
+  const [torch, setTorch] = useState(false);
 
-  const plant = state.plants.find((entry) => entry.id === plantId) ?? activePlant;
+  const plant = plantId ? state.plants.find((entry) => entry.id === plantId) : activePlant;
   const chibi = state.plantChibis.find((entry) => entry.plantId === plant?.id);
   const arUsedToday = state.daily.lastCatchDate === localDateKey();
   const lastHuntPlant = state.plants.find((entry) => entry.id === state.daily.lastCatchPlantId);
 
-  useEffect(() => () => {
-    if (timerRef.current) clearInterval(timerRef.current);
+  useFocusEffect(useCallback(() => {
+    setFocused(true);
+    return () => {
+      setFocused(false);
+      setStep((current) => current === 'scanning' ? 'ready' : current);
+      setProgress(0);
+    };
+  }, []));
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (next) => {
+      setAppActive(next === 'active');
+      if (next !== 'active') {
+        setStep((current) => current === 'scanning' ? 'ready' : current);
+        setProgress(0);
+      }
+    });
+    return () => subscription.remove();
   }, []);
 
-  const finishScan = () => {
-    if (completingRef.current) return;
-    completingRef.current = true;
-    const result = catchCreature(plant?.id ?? activePlant.id);
-    setCaught(result);
-    setStep('result');
-    completingRef.current = false;
-  };
+  useEffect(() => {
+    if (step !== 'scanning' || !focused || !appActive || !plant) return;
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      const next = Math.min(100, Math.floor((Date.now() - startedAt) * 100 / SCAN_DURATION_MS));
+      setProgress(next);
+      if (next === 100) {
+        clearInterval(timer);
+        setCaught(catchCreature(plant.id));
+        setStep('result');
+      }
+    }, 100);
+    return () => clearInterval(timer);
+  }, [appActive, catchCreature, focused, plant, step]);
 
   const startScan = () => {
-    if (arUsedToday || step === 'scanning') return;
+    if (arUsedToday || step === 'scanning' || !plant || !focused || !appActive) return;
     setCaught(null);
     setProgress(0);
     setStep('scanning');
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      setProgress((current) => {
-        const next = Math.min(100, current + 4);
-        if (next === 100) {
-          if (timerRef.current) clearInterval(timerRef.current);
-          timerRef.current = null;
-          setTimeout(finishScan, 180);
-        }
-        return next;
-      });
-    }, 75);
   };
 
   if (!ready || !permission) {
     return <View style={styles.loading}><ActivityIndicator color="#CDEFBF" size="large" /></View>;
   }
 
+  if (!plant) {
+    return <SafeAreaView style={styles.loading}><Text style={styles.panelTitle}>Cây không còn trong vườn</Text><Pressable onPress={() => router.back()} style={styles.primaryButton}><Text style={styles.primaryButtonText}>Trở về</Text></Pressable></SafeAreaView>;
+  }
+
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-      {permission.granted && step !== 'result' ? (
-        <CameraView active facing="back" style={StyleSheet.absoluteFill} />
+      {focused && appActive && permission.granted && step !== 'result' ? (
+        <CameraView enableTorch={torch} facing="back" style={StyleSheet.absoluteFill} />
       ) : (
         <View style={styles.cameraFallback}>
-          <View style={styles.fallbackGlow} />
+          {!state.settings.lightAR && <View style={styles.fallbackGlow} />}
           <Text style={styles.fallbackEmoji}>{chibi?.fallbackEmoji ?? '🌿'}</Text>
         </View>
       )}
@@ -86,13 +102,13 @@ export default function ArHuntScreen() {
             <Text style={styles.eyebrow}>SĂN THÚ AR · {plant?.name.toLocaleUpperCase('vi')}</Text>
             <Text style={styles.title}>{step === 'scanning' ? 'Đang dò chuyển động...' : step === 'result' ? 'Đã phát hiện sinh vật!' : 'Soi quanh cây thật'}</Text>
           </View>
-          <View style={styles.roundButton}><Ionicons name="flashlight-outline" size={21} color="#FFFFFF" /></View>
+          <Pressable accessibilityLabel="Bật hoặc tắt đèn pin" accessibilityRole="button" accessibilityState={{ checked: torch }} disabled={!permission.granted || step === 'result'} onPress={() => setTorch((value) => !value)} style={styles.roundButton}><Ionicons name={torch ? 'flashlight' : 'flashlight-outline'} size={21} color={torch ? '#CDEFBF' : '#FFFFFF'} /></Pressable>
         </View>
 
         <View style={styles.scannerArea}>
           {step === 'result' && caught?.beast ? (
             <View style={styles.creatureReveal}>
-              <View style={styles.creatureHalo} />
+              {!state.settings.lightAR && <View style={styles.creatureHalo} />}
               <Text style={styles.creatureEmoji}>{caught.beast.icon}</Text>
             </View>
           ) : (
@@ -138,7 +154,7 @@ export default function ArHuntScreen() {
             <>
               <View style={styles.progressHeader}><Text style={styles.scanningText}>Đang tìm dấu chân và chuyển động</Text><Text style={styles.progressText}>{progress}%</Text></View>
               <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${progress}%` }]} /></View>
-              <Text style={styles.panelCaption}>Giữ camera hướng về khu vực quanh {plant?.name ?? 'cây'}.</Text>
+              <Text style={styles.panelCaption}>Quét đủ 10 giây quanh {plant.name}. Đây là mô phỏng, chưa xác minh cây hay nhận diện thú thật.</Text>
             </>
           ) : null}
 
@@ -146,7 +162,7 @@ export default function ArHuntScreen() {
             <>
               <Text style={styles.panelTitle}>{caught?.beast.name ?? 'Chưa tìm thấy dấu vết'}</Text>
               <Text style={styles.rarity}>{caught?.beast ? `${caught.beast.rarity} · ${caught.isNew ? 'Thú mới!' : 'Đã có, +1 số lượng'}` : 'Hãy thử lại vào ngày mai'}</Text>
-              <Text style={styles.panelCaption}>{caught?.beast ? 'Sinh vật đã được chuyển vào Kho đồ. Lượt săn chung hôm nay đã hoàn thành.' : 'Lượt săn hôm nay đã được ghi nhận.'}</Text>
+              <Text style={styles.panelCaption}>{caught?.beast ? 'Sinh vật đã được chuyển vào Kho đồ. Lượt săn chung hôm nay đã hoàn thành.' : 'Không thể hoàn tất lượt săn. Hãy kiểm tra lại cây và lượt săn hôm nay.'}</Text>
               <Pressable onPress={() => router.back()} style={styles.primaryButton}><Text style={styles.primaryButtonText}>Cất vào kho và trở về</Text></Pressable>
             </>
           ) : null}

@@ -117,9 +117,9 @@ Thư quản trị được gửi vào **hòm thư trong ứng dụng**, không �
 
 ### Tải ứng dụng
 
-[**Tải PAT cho Android — APK, khoảng 171 MB**](https://expo.dev/artifacts/eas/9FLySOi4VjbBoNM_LZRT0lMATjSYiJPCcpMFRtLI7IM.apk)
+[**Tải PAT cho Android — APK, khoảng 171 MB**](https://expo.dev/artifacts/eas/TNab7oynraJMwlAV8pW5ZEa9vifJ9n2J9J01FlMJnZY.apk)
 
-Đây là bản build ngày 08/11/2026. Sau khi cài, tiếp tục các bước tham gia mạng PAT bên dưới; ứng dụng vẫn cần Tailscale để kết nối máy chủ riêng. Link tải cần được cập nhật khi có bản APK mới.
+Đây là bản build ngày 11/11/2026, phiên bản `0.1.0`, mã Android `2`. Có thể cài cập nhật lên bản PAT cũ cùng chữ ký mà không cần gỡ ứng dụng. Sau khi cài, tiếp tục các bước tham gia mạng PAT bên dưới; ứng dụng vẫn cần Tailscale để kết nối máy chủ riêng. Link tải cần được cập nhật khi có bản APK mới.
 
 ### Yêu cầu
 
@@ -278,6 +278,10 @@ Kiểm thử giao diện hiện mô phỏng native, không xác nhận được 
 | Quét cây → chat khi bật bàn phím → mở thẻ → quay về Vườn | Bàn phím không che ô nhập; âm nhạc phục hồi theo cài đặt |
 | Mất mạng trong lúc thay đổi tiến trình, mở lại khi có mạng | Kiểm tra phần đã lưu và việc gửi lại; chưa coi đây là bảo đảm an toàn khi đóng cưỡng bức ngay sau thao tác |
 | Đăng nhập cùng tài khoản trên máy khác | Kiểm tra cây, ảnh, kho và thư trước khi xóa dữ liệu máy cũ |
+
+Đã kiểm tra bản Android mã `2` trên Samsung SM-J730G ngày 11/11/2026: cài cập nhật giữ dữ liệu và phiên đăng nhập; chọn bán được hủy khi đổi trang; bán nhanh giữ thú cuối mỗi loài; tăng sao/mua đồ bị khóa khi thiếu tài nguyên; nhập số lượng cập nhật tổng tiền; ô chat và nút gửi nằm trên bàn phím. Quà đăng nhập mở thành thẻ thức ăn, được cộng đúng một lần và còn sau khi đóng/mở lại ứng dụng; đối chiếu SQL xác nhận trạng thái nhận quà và số lượng mới đã lưu trên máy chủ. Trình phát âm thanh Android vẫn hoạt động sau các lần chuyển màn đã thử.
+
+Chưa kiểm tra bằng ảnh quét mới, mở thẻ thú, mất mạng đúng lúc ghi hoặc đăng nhập trên thiết bị thứ hai trong đợt này; không suy rộng kết quả trên một máy thành bảo đảm cho mọi thiết bị.
 
 Phần điều phối giao dịch nằm ở `mobile/src/store/economyTransactions.ts`; `AppStore.tsx` giữ trạng thái, phiên tài khoản và vòng đời lưu/đồng bộ. Giới hạn ngữ cảnh chat và nội dung giải thích trên màn hình cùng dùng `CHAT_CONTEXT_LIMITS` để tránh mô tả lệch logic.
 

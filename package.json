@@ -2,21 +2,36 @@
   "name": "pat",
   "version": "0.1.0",
   "private": true,
-  "description": "PAT mobile prototype and SQL Server database tools",
-  "engines": { "node": ">=24.0.0" },
+  "description": "PAT mobile plant journeys, Gemini AI proxy and SQL Server database tools",
+  "engines": {
+    "node": "^24.3.0 || >=26.0.0"
+  },
   "scripts": {
     "start": "npm --prefix mobile start",
     "android": "npm --prefix mobile run android",
     "ios": "npm --prefix mobile run ios",
+    "apk:build": "npm --prefix mobile run build:android",
+    "ios:simulator:build": "npm --prefix mobile run build:ios-simulator",
+    "credentials:android": "npm --prefix mobile run credentials:android",
+    "export:mobile": "npm --prefix mobile run export:mobile",
     "lint": "npm --prefix mobile run lint",
     "typecheck": "npm --prefix mobile run typecheck",
     "test": "npm --prefix mobile test",
-    "check": "npm run lint && npm run typecheck && npm test",
-    "db:check": "node database/test-db.js"
+    "test:critical": "node --test backend/tests/auth.test.js backend/tests/schemaMigrations.test.js backend/tests/imageValidation.test.js && npm --prefix mobile run test:critical",
+    "check": "npm run lint && npm run typecheck && npm test && npm run test:backend",
+    "db:check": "node database/test-db.js",
+    "api": "node backend/server.js",
+    "api:check": "node backend/diagnostics.js",
+    "personal:check": "node backend/personalCheck.js",
+    "server:setup": "node backend/setupServerData.js",
+    "admin:create": "node backend/adminSetup.js",
+    "test:backend": "node --test backend/tests/*.test.js"
   },
   "dependencies": {
     "dotenv": "^18.0.8",
+    "jose": "^6.2.15",
     "msnodesqlv8": "^5.6.0",
-    "mssql": "^12.7.10"
+    "mssql": "^12.7.10",
+    "nodemailer": "^10.3.1"
   }
 }

@@ -8,6 +8,30 @@ node_modules/
 
 # Environment variables
 .env
+.env.*
+!.env.example
+
+# Native signing keys stay local; never commit downloaded EAS credentials.
+*.jks
+*.keystore
+credentials.json
+
+# Generated Expo config export may contain machine-specific resolved values.
+/mobile/resolved-config.json
 
 # Database logs/local files (tuỳ chọn)
 *.sqlite
+
+# Generated local code graph (rebuild instead of committing)
+graphify-out/
+
+# Local Graphify hook contains this machine's executable path
+/.codex/hooks.json
+/.codex/hooks.json.graphify-bak
+.agents
+AGENTS.md
+
+# Test source and fixtures are versioned; only generated coverage is ignored.
+/coverage/
+/backend/coverage/
+/mobile/coverage/

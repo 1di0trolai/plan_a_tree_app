@@ -1,0 +1,32 @@
+# The Android build needs only the mobile project, not API/SQL or local tooling.
+/*
+# No trailing slash: EAS checks directory paths before traversing their files.
+!/mobile
+
+# Dependency installation happens on the builder. Never upload local secrets.
+**/node_modules/
+**/.env
+**/.env.*
+**/*.jks
+**/*.keystore
+**/*.p8
+**/*.p12
+**/*.key
+**/*.pem
+**/*.mobileprovision
+**/*.sqlite
+**/*.sqlite-*
+**/*.db
+**/*.tsbuildinfo
+**/npm-debug.*
+**/yarn-debug.*
+**/yarn-error.*
+/mobile/.expo/
+/mobile/.expo-smoke/
+/mobile/.vscode/
+/mobile/dist/
+/mobile/android/
+/mobile/ios/
+/mobile/tests/
+/mobile/AGENTS.md
+/mobile/resolved-config.json

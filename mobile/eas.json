@@ -1,0 +1,22 @@
+{
+  "cli": {
+    "appVersionSource": "local"
+  },
+  "build": {
+    "personal": {
+      "distribution": "internal",
+      "developmentClient": false,
+      "environment": "preview",
+      "node": "24.14.1",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "ios-simulator": {
+      "extends": "personal",
+      "ios": {
+        "simulator": true
+      }
+    }
+  }
+}

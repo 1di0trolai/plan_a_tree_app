@@ -267,6 +267,8 @@ npm run test:critical
 
 Kiểm thử SQL tích hợp chỉ chạy khi chủ động bật `PAT_AUTH_SQL_SMOKE=1`, `PAT_AUTH_SOCIAL_SQL_SMOKE=1` hoặc `PAT_CLOUD_SQL_SMOKE=1` cho bài tương ứng. Dùng database kiểm thử riêng; không đưa các biến này vào `.env` đang chạy ứng dụng. Chúng được bỏ qua trong lệnh kiểm tra mặc định.
 
+Riêng bài migration dùng `PAT_MIGRATION_SQL_SMOKE=1 node --test backend/tests/schemaMigrationsSql.integration.test.js` (PowerShell: đặt `$env:PAT_MIGRATION_SQL_SMOKE='1'` trước lệnh Node). Bài này tự tạo database tạm tên ngẫu nhiên, kiểm tra áp dụng một lần, checksum và hoàn tác SQL/lịch sử khi lỗi, rồi xóa đúng database vừa tạo; không chạy migration trên PAT. Tài khoản SQL cần quyền tạo/xóa database. Xóa biến môi trường sau khi kiểm tra để các lần chạy thông thường tiếp tục bỏ qua bài này.
+
 Kiểm thử giao diện hiện mô phỏng native, không xác nhận được vị trí bàn phím, âm thanh hay hiển thị trên thiết bị. Trước khi phát hành APK, cần kiểm tra trên máy thật:
 
 | Tình huống | Kết quả cần kiểm tra |

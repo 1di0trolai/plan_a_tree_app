@@ -1,7 +1,17 @@
-import { createSeedState, localDateKey } from '../data/seed';
+/** Chuẩn hóa toàn bộ bản lưu thành trạng thái ứng dụng hiện tại, kiểm tra các trường dữ liệu và chuyển đổi cấu trúc cũ cho cây, kho đồ, kinh tế và cài đặt. */
+
+import { createInitialState, localDateKey, PET_SPECIES } from '../data/seed';
+import { MAX_PURCHASE_QUANTITY, SHOP_CATALOG, STREAK_REWARDS } from '../data/economy';
+import { createEconomyState } from './economyActions';
+import { isGardenerOutfit, parseReminderTime } from '../utils/profilePreferences';
+import { migrateLegacyPets, normalizePetInstances } from './normalizePets';
+import { normalizePetTransactions } from './normalizePetTransactions';
+import { normalizeGiftDock, normalizeLoginVisits, normalizeMailbox, normalizeQuickSaleRarities } from './normalizeMailbox';
 import type {
   AiTone, Analysis, AnalysisLevel, AppState, Beast, CaptureSource, CheckIn,
   InventoryItem, Plant, PlantAnalysisRecord, PlantChibi, PlantPhoto,
+  AiMode, CardRarity, CareEvent, DailyGardenRound, DailyPetPack, PlantChatMessage,
+  PlantJourney, PlantPhase, EconomyState,
 } from '../types/app';
 
 type UnknownRecord = Record<string, unknown>;
@@ -35,6 +45,26 @@ function isAiTone(value: unknown): value is AiTone {
   return value === 'funny' || value === 'gentle' || value === 'expert' || value === 'minimal';
 }
 
+function aiMode(value: unknown): AiMode {
+  return value === 'gemini' || value === 'demo' ? value : 'legacy';
+}
+
+function plantPhase(value: unknown, fallback: PlantPhase = 'growing'): PlantPhase {
+  return value === 'planning' || value === 'germinating' || value === 'seedling'
+    || value === 'growing' || value === 'flowering' || value === 'fruiting' ? value : fallback;
+}
+
+function normalizeJourney(value: unknown, fallback: PlantJourney): PlantJourney {
+  const raw = isRecord(value) ? value : {};
+  return {
+    crop: raw.crop === 'mango' || raw.crop === 'tomato' || raw.crop === 'chili' ? raw.crop : 'other',
+    phase: plantPhase(raw.phase, fallback.phase),
+    method: raw.method === 'seed' ? 'seed' : 'seedling',
+    startedAt: stringValue(raw.startedAt, fallback.startedAt),
+    location: stringValue(raw.location, ''), light: stringValue(raw.light, ''), notes: stringValue(raw.notes, ''),
+  };
+}
+
 function cloneAnalysis(analysis: Analysis): Analysis {
   return { ...analysis, actions: [...analysis.actions] };
 }
@@ -49,7 +79,8 @@ function normalizeAnalysis(value: unknown, fallback: Analysis): Analysis {
     level: isAnalysisLevel(value.level) ? value.level : fallback.level,
     title: stringValue(value.title, fallback.title),
     summary: stringValue(value.summary, fallback.summary),
-    actions: actions.length > 0 ? [...actions] : [...fallback.actions],
+    // An empty list can correctly mean that no intervention is needed today.
+    actions: [...actions],
   };
 }
 
@@ -66,6 +97,7 @@ function blankPlant(index: number): Plant {
     streak: 0,
     bestStreak: 0,
     lastCheckIn: null,
+    journey: { crop: 'other', phase: 'growing', method: 'seedling', startedAt: localDateKey(), location: '', light: '', notes: '' },
   };
 }
 
@@ -83,13 +115,16 @@ function normalizePlant(value: UnknownRecord, fallback: Plant, index: number): P
     streak,
     bestStreak: Math.max(streak, Math.trunc(numberValue(value.bestStreak, fallback.bestStreak))),
     lastCheckIn: nullableString(value.lastCheckIn, fallback.lastCheckIn),
+    journey: normalizeJourney(value.journey, { ...fallback.journey,
+      startedAt: stringValue(value.plantedAt, fallback.plantedAt) }),
+    archived: booleanValue(value.archived, false),
   };
 }
 
 const FALLBACK_ANALYSIS: Analysis = {
-  level: 'Tốt',
+  level: 'Chú ý',
   title: 'Cây đang chờ lần kiểm tra mới',
-  summary: 'Hãy thêm một ảnh để nhận kết quả mô phỏng.',
+  summary: 'Chưa có kết quả phân tích hợp lệ. Hãy thêm ảnh rõ nét để kiểm tra cây.',
   actions: ['Chụp cây trong điều kiện đủ sáng'],
 };
 
@@ -118,6 +153,8 @@ function normalizePhotos(value: unknown): PlantPhoto[] {
     date: stringValue(entry.date, localDateKey()),
     time: stringValue(entry.time, '08:00'),
     source: captureSource(entry.source),
+    purpose: entry.purpose === 'reference' ? 'reference' as const : 'checkin' as const,
+    phase: plantPhase(entry.phase),
   })).filter((entry) => entry.plantId);
 }
 
@@ -130,6 +167,7 @@ function normalizeAnalyses(value: unknown): PlantAnalysisRecord[] {
     date: stringValue(entry.date, localDateKey()),
     time: stringValue(entry.time, '08:00'),
     result: normalizeAnalysis(entry.result, FALLBACK_ANALYSIS),
+    mode: aiMode(entry.mode),
   })).filter((entry) => entry.plantId && entry.photoId);
 }
 
@@ -155,6 +193,8 @@ function migrateLegacyPlantRecords(rawPlants: UnknownRecord[]) {
         date,
         time,
         source: 'library',
+        purpose: 'checkin',
+        phase: 'growing',
       });
       plantAnalyses.push({
         id: analysisId,
@@ -163,6 +203,7 @@ function migrateLegacyPlantRecords(rawPlants: UnknownRecord[]) {
         date,
         time,
         result: normalizeAnalysis(entry.analysis, FALLBACK_ANALYSIS),
+        mode: 'legacy',
       });
     });
   });
@@ -174,40 +215,22 @@ function normalizeChibis(
   value: unknown,
   plants: Plant[],
   rawPlants: UnknownRecord[],
-  seeds: PlantChibi[],
 ): PlantChibi[] {
   const saved = Array.isArray(value) ? value.filter(isRecord) : [];
   return plants.map((plant) => {
     const match = saved.find((entry) => entry.plantId === plant.id);
-    const seed = seeds.find((entry) => entry.plantId === plant.id);
     const rawPlant = rawPlants.find((entry) => entry.id === plant.id);
     return {
-      id: match ? stringValue(match.id, `chibi-${plant.id}`) : seed?.id ?? `chibi-${plant.id}`,
+      id: match ? stringValue(match.id, `chibi-${plant.id}`) : `chibi-${plant.id}`,
       plantId: plant.id,
       sourcePhotoId: match
         ? nullableString(match.sourcePhotoId, null)
-        : seed?.sourcePhotoId ?? null,
-      imageUri: match ? nullableString(match.imageUri, null) : seed?.imageUri ?? null,
+        : null,
+      imageUri: match ? nullableString(match.imageUri, null) : null,
       fallbackEmoji: match
-        ? stringValue(match.fallbackEmoji, seed?.fallbackEmoji ?? '🪴')
-        : stringValue(rawPlant?.emoji, seed?.fallbackEmoji ?? '🪴'),
-      updatedAt: match ? nullableString(match.updatedAt, null) : seed?.updatedAt ?? null,
-    };
-  });
-}
-
-function normalizeBeasts(value: unknown, seeds: Beast[]): Beast[] {
-  const saved = Array.isArray(value) ? value.filter(isRecord) : [];
-  return seeds.map((seed) => {
-    const match = saved.find((entry) => entry.id === seed.id);
-    if (!match) return { ...seed };
-    const quantity = Math.trunc(numberValue(match.quantity, seed.quantity));
-    return {
-      ...seed,
-      level: Math.max(1, Math.trunc(numberValue(match.level, seed.level, 1))),
-      experience: Math.trunc(numberValue(match.experience, seed.experience)),
-      quantity,
-      owned: quantity > 0,
+        ? stringValue(match.fallbackEmoji, '🪴')
+        : stringValue(rawPlant?.emoji, '🪴'),
+      updatedAt: match ? nullableString(match.updatedAt, null) : null,
     };
   });
 }
@@ -223,8 +246,128 @@ function normalizeItems(value: unknown, seeds: InventoryItem[]): InventoryItem[]
   });
 }
 
+function savedRecords(value: unknown): UnknownRecord[] {
+  return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+function normalizeChatMessages(value: unknown, plants: Plant[], photos: PlantPhoto[]): PlantChatMessage[] {
+  return savedRecords(value).filter((entry) => plants.some((plant) => plant.id === entry.plantId)
+    && typeof entry.content === 'string' && entry.content.trim()
+    && (entry.role === 'user' || entry.role === 'assistant')).map((entry, index) => ({
+    id: stringValue(entry.id, `restored-chat-${index}`), plantId: stringValue(entry.plantId, ''),
+    role: entry.role === 'user' ? 'user' : 'assistant', content: stringValue(entry.content, ''),
+    createdAt: stringValue(entry.createdAt, new Date().toISOString()), mode: aiMode(entry.mode),
+    photoId: typeof entry.photoId === 'string' && photos.some((photo) => photo.id === entry.photoId && photo.plantId === entry.plantId)
+      ? entry.photoId : undefined,
+  }));
+}
+
+function normalizeCareEvents(value: unknown, plants: Plant[]): CareEvent[] {
+  return savedRecords(value).filter((entry) => plants.some((plant) => plant.id === entry.plantId)).map((entry, index) => ({
+    id: stringValue(entry.id, `restored-care-${index}`), plantId: stringValue(entry.plantId, ''),
+    kind: entry.kind === 'water' || entry.kind === 'fertilize' || entry.kind === 'repot'
+      || entry.kind === 'prune' || entry.kind === 'observe' ? entry.kind : 'other',
+    note: stringValue(entry.note, ''), createdAt: stringValue(entry.createdAt, new Date().toISOString()),
+  }));
+}
+
+function stringIds(value: unknown): string[] {
+  return Array.isArray(value) ? [...new Set(value.filter((entry): entry is string => typeof entry === 'string' && !!entry))] : [];
+}
+
+function normalizeRounds(value: unknown): DailyGardenRound[] {
+  const dates = new Set<string>();
+  return savedRecords(value).filter((entry) => {
+    if (typeof entry.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(entry.date) || dates.has(entry.date)) return false;
+    dates.add(entry.date);
+    return true;
+  }).map((entry, index) => {
+    // Retain even missing targets: deleting a record must not complete a round.
+    const plantIds = stringIds(entry.plantIds);
+    return { id: stringValue(entry.id, `restored-round-${index}`), date: stringValue(entry.date, ''), plantIds,
+      inspectedPlantIds: stringIds(entry.inspectedPlantIds).filter((id) => plantIds.includes(id)),
+      createdAt: stringValue(entry.createdAt, new Date().toISOString()),
+      completedAt: nullableString(entry.completedAt, null), packId: nullableString(entry.packId, null) };
+  });
+}
+
+function normalizePacks(value: unknown, beasts: readonly Beast[], sourceVersion: unknown): DailyPetPack[] {
+  const rarities: CardRarity[] = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'];
+  const dates = new Set<string>();
+  return savedRecords(value).filter((entry) => {
+    if (typeof entry.date !== 'string' || dates.has(entry.date)
+      || !beasts.some((pet) => pet.id === entry.beastId) || !rarities.includes(entry.rarity as CardRarity)) return false;
+    dates.add(entry.date);
+    return true;
+  }).map((entry, index) => ({
+    id: stringValue(entry.id, `restored-pack-${index}`), roundId: stringValue(entry.roundId, ''),
+    date: stringValue(entry.date, ''), beastId: stringValue(entry.beastId, ''), rarity: entry.rarity as CardRarity,
+    isNew: booleanValue(entry.isNew, false), earnedAt: stringValue(entry.earnedAt, new Date().toISOString()),
+    revealedAt: nullableString(entry.revealedAt, null), demo: booleanValue(entry.demo, true),
+    ...(typeof entry.petInstanceId === 'string' ? { petInstanceId: entry.petInstanceId } : {}),
+    creditedAt: sourceVersion === 5 ? nullableString(entry.creditedAt, null)
+      : nullableString(entry.creditedAt, stringValue(entry.earnedAt, new Date().toISOString())),
+    // Legacy packs retain the missing field: hydration never rolls or credits food.
+    ...(Object.prototype.hasOwnProperty.call(entry, 'bonusFoodItemId') ? {
+      bonusFoodItemId: typeof entry.bonusFoodItemId === 'string' && SHOP_CATALOG.some((food) => food.itemId === entry.bonusFoodItemId)
+        ? entry.bonusFoodItemId : null,
+    } : {}),
+  }));
+}
+
+function validDate(value: unknown): value is string {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+    && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+}
+
+function positiveInteger(value: unknown, max = Number.MAX_SAFE_INTEGER): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= max;
+}
+
+function uniqueRecords(value: unknown, key: (entry: UnknownRecord) => string, valid: (entry: UnknownRecord) => boolean) {
+  const seen = new Set<string>();
+  return savedRecords(value).filter((entry) => {
+    const id = key(entry);
+    if (!valid(entry) || !id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+/** Add the economy without replaying old inspections or changing existing assets. */
+function normalizeEconomy(value: unknown): EconomyState {
+  if (!isRecord(value)) return createEconomyState();
+  const isFood = (id: unknown): id is string => typeof id === 'string' && SHOP_CATALOG.some((entry) => entry.itemId === id);
+  const loginClaims = uniqueRecords(value.loginClaims, (entry) => String(entry.date ?? ''), (entry) =>
+    validDate(entry.date) && isFood(entry.itemId) && positiveInteger(entry.cycleDay, 7) && typeof entry.claimedAt === 'string')
+    .map((entry) => ({ date: entry.date as string, cycleDay: entry.cycleDay as number, itemId: entry.itemId as string, claimedAt: entry.claimedAt as string }));
+  const inspectionRewards = uniqueRecords(value.inspectionRewards, (entry) => JSON.stringify([entry.plantId, entry.date]), (entry) =>
+    typeof entry.plantId === 'string' && !!entry.plantId && validDate(entry.date)
+    && typeof entry.gold === 'number' && Number.isSafeInteger(entry.gold) && entry.gold >= 0 && entry.gold <= 50)
+    .map((entry) => ({ plantId: entry.plantId as string, date: entry.date as string, gold: entry.gold as number }));
+  const streakRewards = uniqueRecords(value.streakRewards, (entry) => JSON.stringify([entry.plantId, entry.milestone]), (entry) =>
+    typeof entry.plantId === 'string' && !!entry.plantId && typeof entry.claimedAt === 'string'
+    && STREAK_REWARDS.some((reward) => reward.milestone === entry.milestone && reward.itemId === entry.itemId))
+    .map((entry) => ({ plantId: entry.plantId as string, milestone: entry.milestone as number, itemId: entry.itemId as string, claimedAt: entry.claimedAt as string }));
+  const purchases = uniqueRecords(value.purchases, (entry) => String(entry.requestId ?? ''), (entry) =>
+    typeof entry.requestId === 'string' && !!entry.requestId.trim() && entry.requestId.length <= 200
+    && positiveInteger(entry.quantity, MAX_PURCHASE_QUANTITY) && typeof entry.createdAt === 'string'
+    // Receipts keep the historical price: later price tuning must not erase a
+    // completed purchase and make its request ID spendable for a second time.
+    && isFood(entry.itemId) && positiveInteger(entry.unitPrice) && positiveInteger(entry.totalGold)
+    && entry.unitPrice * entry.quantity === entry.totalGold)
+    .map((entry) => ({ requestId: entry.requestId as string, itemId: entry.itemId as string, quantity: entry.quantity as number,
+      unitPrice: entry.unitPrice as number, totalGold: entry.totalGold as number, createdAt: entry.createdAt as string }));
+  const petTransactions = normalizePetTransactions(value.petTransactions, purchases);
+  return { gold: typeof value.gold === 'number' && Number.isSafeInteger(value.gold) && value.gold >= 0 ? value.gold : 0,
+    ...(typeof value.demoMailGrantedAt === 'string' && Number.isFinite(Date.parse(value.demoMailGrantedAt))
+      ? { demoMailGrantedAt: value.demoMailGrantedAt } : {}),
+    loginClaims, loginVisits: normalizeLoginVisits(value.loginVisits, loginClaims),
+    inspectionRewards, streakRewards, purchases, petTransactions };
+}
+
 export function normalizePersistedState(value: unknown): AppState {
-  const seed = createSeedState();
+  const seed = createInitialState();
   if (!isRecord(value)) return seed;
 
   const rawAuth = isRecord(value.auth) ? value.auth : {};
@@ -234,13 +377,8 @@ export function normalizePersistedState(value: unknown): AppState {
   const rawSettings = isRecord(value.settings) ? value.settings : {};
   const rawDaily = isRecord(value.daily) ? value.daily : {};
   const rawPlants = Array.isArray(value.plants) ? value.plants.filter(isRecord) : [];
-  const plants =
-    rawPlants.length > 0
-      ? rawPlants.map((plant, index) =>
-          normalizePlant(plant, seed.plants[index] ?? blankPlant(index), index),
-        )
-      : seed.plants;
-  const hasSeparatedPlantData = value.version === 2 || Array.isArray(value.checkIns);
+  const plants = rawPlants.map((plant, index) => normalizePlant(plant, blankPlant(index), index));
+  const hasSeparatedPlantData = value.version === 2 || value.version === 3 || value.version === 4 || value.version === 5 || Array.isArray(value.checkIns);
   const legacyPlantData = hasSeparatedPlantData
     ? null
     : migrateLegacyPlantRecords(rawPlants);
@@ -257,48 +395,61 @@ export function normalizePersistedState(value: unknown): AppState {
     value.plantChibis,
     plants,
     rawPlants,
-    seed.plantChibis,
   );
-  const beasts = normalizeBeasts(rawInventory.beasts, seed.inventory.beasts);
-  const requestedCompanion = nullableString(rawInventory.companionId, seed.inventory.companionId);
-  const companionId = beasts.some((beast) => beast.id === requestedCompanion && beast.owned)
-    ? requestedCompanion
-    : beasts.find((beast) => beast.owned)?.id ?? null;
-  const requestedPlantId = stringValue(value.activePlantId, plants[0].id);
+  const pets = value.version === 4 || value.version === 5 ? normalizePetInstances(rawInventory.pets) : migrateLegacyPets(rawInventory.beasts);
+  const requestedPlantId = stringValue(value.activePlantId, plants[0]?.id ?? '');
 
   return {
-    version: 2,
+    version: 5,
     auth: {
       // A non-remembered session intentionally ends whenever the app is reloaded.
       loggedIn: booleanValue(rawAuth.loggedIn, false) && remember,
       remember,
       identity: stringValue(rawAuth.identity, seed.auth.identity),
+      ...(typeof rawAuth.userId === 'string' && rawAuth.userId.trim() ? { userId: rawAuth.userId } : {}),
     },
     profile: {
-      name: stringValue(rawProfile.name, seed.profile.name),
+      // Keep the old display name first; fall back to the legacy handle only
+      // when a saved profile did not have a meaningful name.
+      name: stringValue(rawProfile.name, '').trim() || stringValue(rawProfile.username, '').trim() || seed.profile.name,
       title: stringValue(rawProfile.title, seed.profile.title),
       avatar: stringValue(rawProfile.avatar, seed.profile.avatar),
       avatarImageUri: nullableString(rawProfile.avatarImageUri, seed.profile.avatarImageUri),
+      email: stringValue(rawProfile.email, ''),
+      phone: stringValue(rawProfile.phone, ''),
+      outfit: isGardenerOutfit(rawProfile.outfit) ? rawProfile.outfit : 'leaf',
     },
     plants,
     checkIns,
     plantPhotos,
     plantAnalyses,
     plantChibis,
+    chatMessages: normalizeChatMessages(value.chatMessages, plants, plantPhotos),
+    careEvents: normalizeCareEvents(value.careEvents, plants),
+    dailyRounds: normalizeRounds(value.dailyRounds),
+    dailyPacks: normalizePacks(value.dailyPacks, PET_SPECIES, value.version),
+    economy: normalizeEconomy(value.economy),
+    mailbox: normalizeMailbox(value.mailbox),
     activePlantId: plants.some((plant) => plant.id === requestedPlantId)
       ? requestedPlantId
-      : plants[0].id,
+      : plants[0]?.id ?? '',
     inventory: {
-      beasts,
+      pets,
       items: normalizeItems(rawInventory.items, seed.inventory.items),
-      companionId,
     },
     settings: {
-      notifications: booleanValue(rawSettings.notifications, seed.settings.notifications),
-      reminderTime: stringValue(rawSettings.reminderTime, seed.settings.reminderTime),
+      notifications: rawSettings.notificationConsent === true && rawSettings.notifications === true,
+      notificationConsent: rawSettings.notificationConsent === true,
+      reminderTime: typeof rawSettings.reminderTime === 'string' && parseReminderTime(rawSettings.reminderTime)
+        ? rawSettings.reminderTime.trim() : seed.settings.reminderTime,
       lightAR: booleanValue(rawSettings.lightAR, seed.settings.lightAR),
-      music: booleanValue(rawSettings.music, seed.settings.music),
+      music: rawSettings.musicConsent === true && rawSettings.music === true,
+      musicConsent: rawSettings.musicConsent === true,
+      musicUri: nullableString(rawSettings.musicUri, null),
+      musicName: nullableString(rawSettings.musicName, null),
       aiTone: isAiTone(rawSettings.aiTone) ? rawSettings.aiTone : seed.settings.aiTone,
+      giftDock: normalizeGiftDock(rawSettings.giftDock),
+      quickSaleRarities: normalizeQuickSaleRarities(rawSettings.quickSaleRarities),
     },
     daily: {
       lastCatchDate: nullableString(rawDaily.lastCatchDate, null),

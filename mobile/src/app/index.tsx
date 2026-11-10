@@ -1,7 +1,9 @@
-import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+/** Hiển thị các biểu mẫu đăng nhập, đăng ký và khôi phục mật khẩu, kèm ghi nhớ tài khoản và đăng nhập mạng xã hội. */
+
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { router } from "expo-router";
+import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -9,215 +11,549 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useApp } from '@/store/AppStore';
-import { isIdentityValid } from '@/utils/validation';
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
-type AuthMode = 'login' | 'register' | 'forgot';
+import { BrandArtwork } from "@/components/BrandArtwork";
+import { PasswordRules } from "@/components/PasswordRules";
+import { SocialProviderButton } from "@/components/SocialProviderButton";
+import { useControlFocus } from "@/hooks/useControlFocus";
+import { useI18n } from "@/i18n";
+import { useApp } from "@/store/AppStore";
+import { COLORS, GRADIENTS, INPUT, INTERACTION, LAYOUT, RADIUS, SPACING, TYPE } from "@/theme";
+import { isValidNewPassword, PASSWORD_REQUIREMENTS } from "@/utils/passwordPolicy";
+import type { SocialProvider } from "@/services/accountAuth";
+
+type AuthMode = "login" | "register" | "forgot" | "reset";
+
+const AUTH_COPY: Record<AuthMode, { title: string; action: string }> = {
+  login: { title: "Mở khu vườn của bạn", action: "Vào khu vườn" },
+  register: { title: "Tạo tài khoản", action: "Tạo tài khoản" },
+  forgot: { title: "Quên mật khẩu", action: "Gửi mã khôi phục" },
+  reset: { title: "Đặt lại mật khẩu", action: "Đặt mật khẩu mới" },
+};
 
 export default function AuthScreen() {
-  const { ready, state, login, register, forgotPassword } = useApp();
-  const [mode, setMode] = useState<AuthMode>('login');
-  const [name, setName] = useState('');
-  const [identity, setIdentity] = useState('demo@pat.vn');
-  const [password, setPassword] = useState('123456');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [remember, setRemember] = useState(true);
+  const { state } = useApp();
+  return (
+    <AuthForm key={state.auth.loggedIn ? "active-session" : "signed-out"} />
+  );
+}
+
+function AuthForm() {
+  const { t } = useI18n();
+  const focus = useControlFocus();
+  const { ready, state, login, loginSocial, register, requestPasswordReset, resetPassword,
+    rememberedEmail, rememberedPassword, rememberLogin, updateRememberLogin } = useApp();
+  const [mode, setMode] = useState<AuthMode>("login");
+  const [name, setName] = useState("");
+  const [identity, setIdentity] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [resetToken, setResetToken] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
+  const [remember, setRemember] = useState(false);
+  const [message, setMessage] = useState<{
+    type: "error" | "success";
+    text: string;
+  } | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [socialPending, setSocialPending] = useState<SocialProvider | null>(null);
+  const [rememberPending, setRememberPending] = useState(false);
+  const identityEdited = useRef(false);
+  const passwordEdited = useRef(false);
+  const passwordAutofilled = useRef(false);
+  const rememberEdited = useRef(false);
+  const rememberHydrated = useRef(false);
+  const rememberOperation = useRef(false);
+  const operation = useRef(false);
+  const mounted = useRef(true);
 
   useEffect(() => {
-    if (ready && state.auth.loggedIn) router.replace('/garden');
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  useEffect(() => {
+    if (ready && state.auth.loggedIn) router.replace("/garden");
   }, [ready, state.auth.loggedIn]);
 
-  const switchMode = (nextMode: AuthMode) => {
-    setMessage(null);
-    setMode(nextMode);
+  useEffect(() => {
+    if (!ready || rememberHydrated.current) return;
+    rememberHydrated.current = true;
+    if (!identityEdited.current) setIdentity(rememberedEmail);
+    if (!identityEdited.current && !passwordEdited.current && rememberLogin && rememberedPassword) {
+      setPassword(rememberedPassword);
+      passwordAutofilled.current = true;
+    }
+    if (!rememberEdited.current) setRemember(rememberLogin);
+  }, [ready, rememberedEmail, rememberedPassword, rememberLogin]);
+
+  const toggleRemember = async () => {
+    if (operation.current || rememberOperation.current) return;
+    rememberOperation.current = true;
+    rememberEdited.current = true;
+    const next = !remember;
+    setRememberPending(true);
+    try {
+      const result = await updateRememberLogin(next);
+      if (!mounted.current) return;
+      if (result.ok) {
+        setRemember(next);
+        if (!next && passwordAutofilled.current) {
+          setPassword("");
+          passwordAutofilled.current = false;
+        }
+      }
+      else setMessage({ type: "error", text: result.message ?? "Chưa lưu được lựa chọn ghi nhớ. Hãy thử lại." });
+    } catch {
+      if (mounted.current) setMessage({ type: "error", text: "Chưa lưu được lựa chọn ghi nhớ. Hãy thử lại." });
+    } finally {
+      rememberOperation.current = false;
+      if (mounted.current) setRememberPending(false);
+    }
   };
 
-  const heading = useMemo(() => {
-    if (mode === 'register') return { eyebrow: 'BẮT ĐẦU HÀNH TRÌNH', title: 'Tạo khu vườn PAT', copy: 'Tạo tài khoản mẫu để bắt đầu theo dõi những người bạn xanh.' };
-    if (mode === 'forgot') return { eyebrow: 'KHÔI PHỤC TÀI KHOẢN', title: 'Quên mật khẩu?', copy: 'PAT sẽ mô phỏng việc gửi hướng dẫn đến email của bạn.' };
-    return { eyebrow: 'CHÀO NGƯỜI CHĂM CÂY', title: 'Mừng bạn trở lại!', copy: 'Khu vườn nhỏ đang chờ bạn check-in hôm nay.' };
-  }, [mode]);
+  const clearSecrets = () => {
+    setPassword("");
+    passwordAutofilled.current = false;
+    setConfirmPassword("");
+    setResetToken("");
+    setShowPassword(false);
+  };
+
+  const switchMode = (nextMode: AuthMode) => {
+    if (operation.current || rememberOperation.current) return;
+    setMessage(null);
+    clearSecrets();
+    setMode(nextMode);
+    if (nextMode === "login" && remember && rememberedPassword &&
+        identity.trim().toLowerCase() === rememberedEmail.toLowerCase()) {
+      setPassword(rememberedPassword);
+      passwordAutofilled.current = true;
+    }
+  };
+
+  const clearPasswordValidation = () => setMessage(previous =>
+    previous?.type === "error" && [
+      PASSWORD_REQUIREMENTS,
+      "Nhập mật khẩu, tối đa 128 ký tự.",
+      "Mật khẩu nhập lại chưa khớp.",
+    ].includes(previous.text) ? null : previous,
+  );
 
   const submit = async () => {
+    if (operation.current || rememberOperation.current) return;
     setMessage(null);
-    if (!isIdentityValid(identity) || (mode !== 'login' && !identity.trim().includes('@'))) {
-      setMessage({ type: 'error', text: mode === 'login' ? 'Hãy nhập email hoặc số điện thoại hợp lệ.' : 'Hãy nhập email hợp lệ.' });
+    if (
+      mode !== "reset" && (
+        identity.trim().length > 254 ||
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identity.trim())
+      )
+    ) {
+      setMessage({
+        type: "error",
+        text: "Nhập email hợp lệ.",
+      });
       return;
     }
-    if (mode !== 'forgot' && password.length < 6) {
-      setMessage({ type: 'error', text: 'Mật khẩu cần ít nhất 6 ký tự.' });
+    if (mode === "reset" && !/^[A-Za-z0-9_-]{43}$/.test(resetToken.trim())) {
+      setMessage({ type: "error", text: "Dán đầy đủ mã khôi phục trong email." });
       return;
     }
-    if (mode === 'register' && name.trim().length < 2) {
-      setMessage({ type: 'error', text: 'Tên hiển thị cần ít nhất 2 ký tự.' });
+    const createsPassword = mode === "register" || mode === "reset";
+    if (createsPassword && !isValidNewPassword(password)) {
+      setMessage({ type: "error", text: PASSWORD_REQUIREMENTS });
       return;
     }
-    if (mode === 'register' && confirmPassword !== password) {
-      setMessage({ type: 'error', text: 'Mật khẩu nhập lại chưa khớp.' });
+    if (mode === "login" && (password.length > 128 || password.length < 1)) {
+      setMessage({ type: "error", text: "Nhập mật khẩu, tối đa 128 ký tự." });
       return;
     }
-
+    if (mode === "register" && (name.trim().length < 2 || name.trim().length > 40)) {
+      setMessage({ type: "error", text: "Tên người dùng cần từ 2 đến 40 ký tự." });
+      return;
+    }
+    if (createsPassword && confirmPassword !== password) {
+      setMessage({ type: "error", text: "Mật khẩu nhập lại chưa khớp." });
+      return;
+    }
+    operation.current = true;
     setSubmitting(true);
     try {
-      if (mode === 'forgot') {
-        const result = await Promise.resolve(forgotPassword(identity));
-        setMessage({ type: result.ok ? 'success' : 'error', text: result.message });
-        return;
-      }
-      if (mode === 'register') {
-        const result = await Promise.resolve(register(name.trim(), identity.trim(), password));
+      if (mode === "forgot") {
+        const result = await requestPasswordReset(identity.trim());
+        if (!mounted.current) return;
+        setMessage({ type: result.ok ? "success" : "error", text: result.message });
+        if (result.ok) {
+          clearSecrets();
+          setMode("reset");
+        }
+      } else if (mode === "reset") {
+        const result = await resetPassword(resetToken.trim(), password);
+        if (!mounted.current) return;
+        setMessage({ type: result.ok ? "success" : "error", text: result.message });
+        if (result.ok) {
+          clearSecrets();
+          setMode("login");
+        }
+      } else if (mode === "register") {
+        const result = await Promise.resolve(
+          register(name.trim(), identity.trim(), password),
+        );
+        if (!mounted.current) return;
         if (!result.ok) {
-          setMessage({ type: 'error', text: result.message ?? 'Chưa thể tạo tài khoản mẫu.' });
+          setMessage({
+            type: "error",
+            text: result.message ?? "Chưa thể tạo tài khoản.",
+          });
           return;
         }
-        switchMode('login');
-        setMessage({ type: 'success', text: 'Đã tạo tài khoản mẫu. Bạn có thể đăng nhập ngay.' });
-        return;
+        router.replace("/garden");
+      } else {
+        const result = await Promise.resolve(
+          login(identity.trim(), password, remember),
+        );
+        if (!mounted.current) return;
+        if (!result.ok) {
+          setMessage({
+            type: "error",
+            text: result.message ?? "Chưa thể đăng nhập.",
+          });
+          return;
+        }
+        router.replace("/garden");
       }
-      const result = await Promise.resolve(login(identity.trim(), password, remember));
-      if (!result.ok) {
-        setMessage({ type: 'error', text: result.message ?? 'Không thể đăng nhập.' });
-        return;
-      }
-      router.replace('/garden');
+    } catch (cause) {
+      if (!mounted.current) return;
+      setMessage({
+        type: "error",
+        text: cause instanceof Error ? cause.message : "Chưa thể hoàn tất. Vui lòng thử lại.",
+      });
     } finally {
-      setSubmitting(false);
+      operation.current = false;
+      if (mounted.current) setSubmitting(false);
     }
   };
 
-  if (!ready) {
+  const submitSocial = async (provider: SocialProvider) => {
+    if (operation.current || rememberOperation.current) return;
+    operation.current = true;
+    setSubmitting(true);
+    setSocialPending(provider);
+    setMessage(null);
+    try {
+      const result = await loginSocial(provider, remember);
+      if (!mounted.current || result.cancelled) return;
+      if (result.ok) { clearSecrets(); router.replace("/garden"); }
+      else setMessage({ type: "error", text: result.message ?? "Chưa thể đăng nhập. Hãy thử lại." });
+    } catch {
+      if (mounted.current) setMessage({ type: "error", text: "Chưa thể đăng nhập. Hãy thử lại." });
+    } finally {
+      operation.current = false;
+      if (mounted.current) { setSubmitting(false); setSocialPending(null); }
+    }
+  };
+
+  if (!ready)
     return (
       <View style={styles.loading}>
-        <View style={styles.loadingLogo}><Ionicons name="leaf" size={34} color="#246B4A" /></View>
-        <ActivityIndicator color="#246B4A" />
-        <Text style={styles.loadingText}>Đang mở khu vườn...</Text>
+        <ActivityIndicator color={COLORS.primaryDark} />
       </View>
     );
-  }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          <LinearGradient colors={['#174A35', '#2F7854']} style={styles.hero}>
-            <View style={styles.brandRow}>
-              <View style={styles.brandMark}><Ionicons name="leaf" size={22} color="#214C37" /></View>
-              <Text style={styles.brand}>PAT</Text>
-            </View>
-            <View style={styles.heroCopy}>
-              <Text style={styles.heroEyebrow}>PLANT ADVENTURE TRACKER</Text>
-              <Text style={styles.heroTitle}>Mỗi chiếc lá đều có một câu chuyện.</Text>
-              <Text style={styles.heroText}>Theo dõi cây mỗi ngày và khám phá những người bạn nhỏ quanh khu vườn.</Text>
-            </View>
-            <View style={styles.heroPlant}>
-              <View style={[styles.leaf, styles.leafLeft]} />
-              <View style={[styles.leaf, styles.leafRight]} />
-              <View style={styles.stem} />
-              <View style={styles.pot}><Text style={styles.potFace}>• ᴗ •</Text></View>
-            </View>
-          </LinearGradient>
-
-          <View style={styles.card}>
-            {mode !== 'login' && (
-              <Pressable onPress={() => switchMode('login')} style={styles.backButton} accessibilityRole="button">
-                <Ionicons name="arrow-back" size={18} color="#246B4A" />
-                <Text style={styles.backText}>Đăng nhập</Text>
-              </Pressable>
+    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
+        <ScrollView
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View
+            testID="auth-brand"
+            style={styles.brand}
+            accessible
+            accessibilityRole="header"
+            accessibilityLabel="PAT"
+          >
+            <BrandArtwork variant="logo" size={LAYOUT.authLogo} />
+          </View>
+          <View style={styles.form}>
+            <Text style={styles.title}>{t(AUTH_COPY[mode].title)}</Text>
+            {mode === "forgot" && (
+              <Text style={styles.description}>{t("Nhập email đăng nhập để nhận mã khôi phục.")}</Text>
             )}
-            <Text style={styles.eyebrow}>{heading.eyebrow}</Text>
-            <Text style={styles.title}>{heading.title}</Text>
-            <Text style={styles.copy}>{heading.copy}</Text>
-
-            {mode === 'register' && (
-              <Field icon="person-outline" label="Tên của bạn">
-                <TextInput value={name} onChangeText={setName} style={styles.input} placeholder="Ví dụ: Minh Anh" placeholderTextColor="#99A19D" autoCapitalize="words" />
+            {mode === "reset" && (
+              <Text style={styles.description}>{t("Dán mã trong email. Mã có hiệu lực 10 phút và chỉ dùng một lần.")}</Text>
+            )}
+            {mode === "register" && (
+              <Field label={t("Tên người dùng")}>
+                <TextInput
+                  {...focus.props("name")}
+                  accessibilityLabel={t("Tên người dùng")}
+                  value={name}
+                  onChangeText={setName}
+                  style={[styles.input, focus.style("name")]}
+                  placeholder={t("Tên người dùng")}
+                  underlineColorAndroid={COLORS.transparent}
+                  placeholderTextColor={COLORS.textMuted}
+                  autoCapitalize="words"
+                  maxLength={40}
+                  autoComplete="name"
+                  editable={!submitting}
+                />
               </Field>
             )}
-
-            <Field icon="mail-outline" label={mode === 'login' ? 'Email hoặc số điện thoại' : 'Email'}>
+            {mode !== "reset" && <Field
+              label={t("Email đăng nhập")}
+            >
               <TextInput
+                {...focus.props("identity")}
+                accessibilityLabel={t("Email đăng nhập")}
                 value={identity}
-                onChangeText={setIdentity}
-                style={styles.input}
+                onChangeText={value => {
+                  identityEdited.current = true;
+                  setIdentity(value);
+                  // Do not offer one account's saved secret for another email.
+                  // Editing the form does not delete the encrypted saved login.
+                  if (passwordAutofilled.current) { setPassword(""); passwordAutofilled.current = false; }
+                }}
+                style={[styles.input, focus.style("identity")]}
                 placeholder="ban@example.com"
-                placeholderTextColor="#99A19D"
+                underlineColorAndroid={COLORS.transparent}
+                placeholderTextColor={COLORS.textMuted}
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="email-address"
                 textContentType="username"
+                autoComplete="email"
+                maxLength={254}
+                editable={!submitting}
               />
-            </Field>
-
-            {mode !== 'forgot' && (
-              <Field icon="lock-closed-outline" label="Mật khẩu">
+            </Field>}
+            {mode === "reset" && (
+              <Field label={t("Mã khôi phục")}>
                 <TextInput
-                  value={password}
-                  onChangeText={setPassword}
-                  style={[styles.input, styles.passwordInput]}
-                  placeholder="Tối thiểu 6 ký tự"
-                  placeholderTextColor="#99A19D"
-                  secureTextEntry={!showPassword}
-                  textContentType={mode === 'login' ? 'password' : 'newPassword'}
+                  {...focus.props("reset-token")}
+                  accessibilityLabel={t("Mã khôi phục")}
+                  value={resetToken}
+                  onChangeText={setResetToken}
+                  style={[styles.input, focus.style("reset-token")]}
+                  placeholder={t("Dán mã từ email")}
+                  underlineColorAndroid={COLORS.transparent}
+                  placeholderTextColor={COLORS.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  maxLength={128}
+                  editable={!submitting}
                 />
-                <Pressable onPress={() => setShowPassword((value) => !value)} hitSlop={10} accessibilityLabel={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}>
-                  <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={21} color="#68756F" />
+              </Field>
+            )}
+            {mode !== "forgot" && <Field label={t(mode === "reset" ? "Mật khẩu mới" : "Mật khẩu")}>
+                <TextInput
+                  {...focus.props("password")}
+                  accessibilityLabel={t(mode === "reset" ? "Mật khẩu mới" : "Mật khẩu")}
+                  value={password}
+                  onChangeText={value => {
+                    passwordEdited.current = true;
+                    passwordAutofilled.current = false;
+                    setPassword(value);
+                    clearPasswordValidation();
+                  }}
+                  style={[styles.input, styles.password, focus.style("password")]}
+                  placeholder={t(mode !== "login" ? "Từ 8 đến 128 ký tự" : "Mật khẩu của bạn")}
+                  underlineColorAndroid={COLORS.transparent}
+                  placeholderTextColor={COLORS.textMuted}
+                  secureTextEntry={!showPassword}
+                  textContentType={
+                    mode === "login" ? "password" : "newPassword"
+                  }
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  maxLength={128}
+                  editable={!submitting}
+                />
+                <Pressable
+                  {...focus.props("password-visibility")}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    t(showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu")
+                  }
+                  onPress={() => setShowPassword((value) => !value)}
+                  disabled={submitting}
+                  accessibilityState={{ disabled: submitting }}
+                  style={({ pressed }) => [
+                    styles.eye,
+                    pressed && styles.pressed,
+                    focus.style("password-visibility"),
+                  ]}
+                >
+                  <Ionicons
+                    name={showPassword ? "eye-off-outline" : "eye-outline"}
+                    size={LAYOUT.smallIcon}
+                    color={COLORS.textMuted}
+                  />
                 </Pressable>
+            </Field>}
+            {(mode === "register" || mode === "reset") && (
+              <PasswordRules value={password} />
+            )}
+            {(mode === "register" || mode === "reset") && (
+              <Field label={t("Nhập lại mật khẩu")}>
+                <TextInput
+                  {...focus.props("confirm-password")}
+                  accessibilityLabel={t("Nhập lại mật khẩu")}
+                  value={confirmPassword}
+                  onChangeText={value => { setConfirmPassword(value); clearPasswordValidation(); }}
+                  style={[styles.input, focus.style("confirm-password")]}
+                  placeholder={t("Nhập lại mật khẩu")}
+                  underlineColorAndroid={COLORS.transparent}
+                  placeholderTextColor={COLORS.textMuted}
+                  secureTextEntry={!showPassword}
+                  textContentType="newPassword"
+                  autoComplete="new-password"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  maxLength={128}
+                  editable={!submitting}
+                />
               </Field>
             )}
-
-            {mode === 'register' && (
-              <Field icon="shield-checkmark-outline" label="Nhập lại mật khẩu">
-                <TextInput value={confirmPassword} onChangeText={setConfirmPassword} style={styles.input} placeholder="Nhập lại mật khẩu" placeholderTextColor="#99A19D" secureTextEntry={!showPassword} textContentType="newPassword" />
-              </Field>
-            )}
-
-            {mode === 'login' && (
-              <View style={styles.optionsRow}>
-                <View style={styles.rememberRow}>
-                  <Switch value={remember} onValueChange={setRemember} trackColor={{ false: '#D7DDD8', true: '#8BC59B' }} thumbColor={remember ? '#246B4A' : '#FFFFFF'} />
-                  <Text style={styles.rememberText}>Ghi nhớ</Text>
-                </View>
-                <Pressable onPress={() => switchMode('forgot')} accessibilityRole="button"><Text style={styles.textButton}>Quên mật khẩu?</Text></Pressable>
+            {mode === "login" && (
+              <View style={styles.options}>
+                <Pressable
+                  {...focus.props("remember")}
+                  accessibilityRole="checkbox"
+                  accessibilityLabel={t("Ghi nhớ đăng nhập")}
+                  accessibilityState={{ checked: remember, disabled: submitting || rememberPending, busy: rememberPending }}
+                  disabled={submitting || rememberPending}
+                  onPress={() => void toggleRemember()}
+                  style={({ pressed }) => [
+                    styles.optionButton,
+                    pressed && styles.pressed,
+                    focus.style("remember"),
+                  ]}
+                >
+                  <Ionicons
+                    name={remember ? "checkbox" : "square-outline"}
+                    size={LAYOUT.smallIcon}
+                    color={remember ? COLORS.primaryDark : COLORS.textMuted}
+                  />
+                  <Text style={styles.optionText}>{t("Ghi nhớ đăng nhập")}</Text>
+                </Pressable>
+                <Pressable
+                  {...focus.props("forgot-password")}
+                  accessibilityRole="button"
+                  accessibilityLabel={t("Quên mật khẩu?")}
+                  accessibilityState={{ disabled: submitting }}
+                  disabled={submitting}
+                  onPress={() => switchMode("forgot")}
+                  style={({ pressed }) => [styles.optionButton, pressed && styles.pressed, focus.style("forgot-password")]}
+                >
+                  <Text style={styles.link}>{t("Quên mật khẩu?")}</Text>
+                </Pressable>
               </View>
             )}
-
             {message && (
-              <View style={[styles.message, message.type === 'error' ? styles.messageError : styles.messageSuccess]}>
-                <Ionicons name={message.type === 'error' ? 'alert-circle-outline' : 'checkmark-circle-outline'} size={19} color={message.type === 'error' ? '#A94A45' : '#246B4A'} />
-                <Text style={[styles.messageText, message.type === 'error' ? styles.messageTextError : styles.messageTextSuccess]}>{message.text}</Text>
+              <Text
+                accessibilityLiveRegion="polite"
+                style={[
+                  styles.message,
+                  message.type === "error" && styles.error,
+                ]}
+              >
+                {t(message.text)}
+              </Text>
+            )}
+            <Pressable
+              {...focus.props("submit")}
+              accessibilityRole="button"
+              accessibilityLabel={t(AUTH_COPY[mode].action)}
+              accessibilityState={{ disabled: submitting || rememberPending, busy: submitting }}
+              onPress={() => void submit()}
+              disabled={submitting || rememberPending}
+              style={({ pressed }) => [
+                styles.primary,
+                pressed && styles.pressed,
+                submitting && styles.disabled,
+                focus.style("submit"),
+              ]}
+            >
+              {submitting ? (
+                <ActivityIndicator color={COLORS.onAction} />
+              ) : (
+                <>
+                  <Text style={styles.primaryText}>
+                    {t(AUTH_COPY[mode].action)}
+                  </Text>
+                  <Ionicons
+                    name="arrow-forward"
+                    size={LAYOUT.smallIcon}
+                    color={COLORS.onAction}
+                  />
+                </>
+              )}
+            </Pressable>
+            {(mode === "login" || mode === "register") && (
+              <View style={styles.socialOptions}>
+                <View style={styles.socialDivider} accessible={false}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.optionText}>{t("hoặc")}</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+                {(["google", "facebook"] as const).map(provider => (
+                  <SocialProviderButton key={provider}
+                    provider={provider}
+                    disabled={submitting || rememberPending}
+                    loading={socialPending === provider}
+                    onPress={() => void submitSocial(provider)}
+                  />
+                ))}
               </View>
             )}
-
-            <Pressable onPress={submit} disabled={submitting} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed, submitting && styles.disabled]} accessibilityRole="button">
-              {submitting ? <ActivityIndicator color="#FFFFFF" /> : <>
-                <Text style={styles.primaryButtonText}>{mode === 'login' ? 'Vào khu vườn' : mode === 'register' ? 'Tạo tài khoản' : 'Gửi hướng dẫn'}</Text>
-                <Ionicons name={mode === 'forgot' ? 'paper-plane-outline' : 'arrow-forward'} size={19} color="#FFFFFF" />
-              </>}
-            </Pressable>
-
-            {mode === 'login' && (
-              <>
-                <View style={styles.divider}><View style={styles.dividerLine} /><Text style={styles.dividerText}>bản thử nghiệm</Text><View style={styles.dividerLine} /></View>
-                <Text style={styles.demoHint}>Dùng <Text style={styles.demoStrong}>demo@pat.vn</Text> · mật khẩu <Text style={styles.demoStrong}>123456</Text></Text>
-                <Pressable onPress={() => switchMode('register')} style={styles.registerLink} accessibilityRole="button">
-                  <Text style={styles.registerText}>Chưa có tài khoản? <Text style={styles.textButton}>Tạo khu vườn mới</Text></Text>
-                </Pressable>
-              </>
+            {mode === "reset" && (
+              <Pressable
+                {...focus.props("resend-reset")}
+                accessibilityRole="button"
+                accessibilityLabel={t("Gửi lại mã")}
+                accessibilityState={{ disabled: submitting }}
+                disabled={submitting}
+                onPress={() => switchMode("forgot")}
+                style={({ pressed }) => [styles.switchMode, pressed && styles.pressed, focus.style("resend-reset")]}
+              >
+                <Text style={styles.link}>{t("Gửi lại mã")}</Text>
+              </Pressable>
             )}
-          </View>
-
-          <View style={styles.privacyRow}>
-            <Ionicons name="phone-portrait-outline" size={16} color="#68756F" />
-            <Text style={styles.privacyText}>Dữ liệu mẫu chỉ được lưu trên thiết bị của bạn.</Text>
+            <Pressable
+              {...focus.props("switch-mode")}
+              accessibilityRole="button"
+              accessibilityLabel={t(mode === "login" ? "Tạo tài khoản" : "Quay lại đăng nhập")}
+              accessibilityState={{ disabled: submitting }}
+              onPress={() =>
+                switchMode(mode === "login" ? "register" : "login")
+              }
+              disabled={submitting}
+              style={({ pressed }) => [
+                styles.switchMode,
+                pressed && styles.pressed,
+                focus.style("switch-mode"),
+              ]}
+            >
+              <Text style={styles.optionText}>
+                {mode === "login" ? `${t("Chưa có tài khoản?")} ` : ""}
+                <Text style={styles.link}>
+                  {t(mode === "login" ? "Tạo tài khoản" : "Quay lại đăng nhập")}
+                </Text>
+              </Text>
+            </Pressable>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -225,72 +561,113 @@ export default function AuthScreen() {
   );
 }
 
-function Field({ icon, label, children }: { icon: keyof typeof Ionicons.glyphMap; label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <View style={styles.fieldWrap}>
       <Text style={styles.label}>{label}</Text>
-      <View style={styles.field}>
-        <Ionicons name={icon} size={20} color="#68756F" />
-        {children}
-      </View>
+      <View style={styles.field}>{children}</View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  safe: { flex: 1, backgroundColor: '#F5F3EB' },
-  scroll: { flexGrow: 1, paddingBottom: 28 },
-  loading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, backgroundColor: '#F5F3EB' },
-  loadingLogo: { width: 68, height: 68, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: '#E4F1E4' },
-  loadingText: { color: '#68756F', fontWeight: '700' },
-  hero: { minHeight: 285, paddingHorizontal: 24, paddingTop: 22, overflow: 'hidden' },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  brandMark: { width: 39, height: 39, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: '#D8EF76' },
-  brand: { color: '#FFFFFF', fontSize: 23, fontWeight: '900', letterSpacing: 1 },
-  heroCopy: { width: '70%', marginTop: 29, zIndex: 2 },
-  heroEyebrow: { color: '#D8EF76', fontSize: 10, fontWeight: '900', letterSpacing: 1.4 },
-  heroTitle: { marginTop: 8, color: '#FFFFFF', fontSize: 30, lineHeight: 34, fontWeight: '900' },
-  heroText: { marginTop: 10, color: '#D9E9DF', fontSize: 13, lineHeight: 19, fontWeight: '600' },
-  heroPlant: { position: 'absolute', right: 15, bottom: -2, width: 125, height: 165, alignItems: 'center', justifyContent: 'flex-end' },
-  pot: { width: 83, height: 65, borderTopLeftRadius: 13, borderTopRightRadius: 13, borderBottomLeftRadius: 26, borderBottomRightRadius: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: '#E9904A' },
-  potFace: { marginTop: 5, color: '#613C2C', fontSize: 17, fontWeight: '900' },
-  stem: { position: 'absolute', bottom: 62, width: 8, height: 75, borderRadius: 10, backgroundColor: '#78A958' },
-  leaf: { position: 'absolute', bottom: 105, width: 58, height: 36, borderTopLeftRadius: 45, borderBottomRightRadius: 45, backgroundColor: '#A6D166' },
-  leafLeft: { right: 61, transform: [{ rotate: '20deg' }] },
-  leafRight: { left: 61, transform: [{ scaleX: -1 }, { rotate: '20deg' }], backgroundColor: '#7EB65E' },
-  card: { marginTop: -18, marginHorizontal: 16, padding: 22, borderRadius: 28, backgroundColor: '#FFFDF8', shadowColor: '#173C2B', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.1, shadowRadius: 22, elevation: 6 },
-  backButton: { minHeight: 40, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 7 },
-  backText: { color: '#246B4A', fontSize: 14, fontWeight: '800' },
-  eyebrow: { color: '#438461', fontSize: 10, fontWeight: '900', letterSpacing: 1.25 },
-  title: { marginTop: 5, color: '#1D3028', fontSize: 26, lineHeight: 31, fontWeight: '900' },
-  copy: { marginTop: 7, marginBottom: 16, color: '#68756F', fontSize: 14, lineHeight: 20 },
-  fieldWrap: { marginTop: 12 },
-  label: { marginBottom: 7, color: '#33463D', fontSize: 13, fontWeight: '800' },
-  field: { minHeight: 54, paddingHorizontal: 15, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: '#DCE2DD', borderRadius: 16, backgroundColor: '#F9FAF6' },
-  input: { flex: 1, minHeight: 52, color: '#1D3028', fontSize: 15, fontWeight: '600' },
-  passwordInput: { paddingRight: 4 },
-  optionsRow: { marginTop: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  rememberRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  rememberText: { color: '#52615A', fontSize: 13, fontWeight: '700' },
-  textButton: { color: '#246B4A', fontSize: 13, fontWeight: '900' },
-  message: { marginTop: 14, padding: 11, flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 13 },
-  messageError: { backgroundColor: '#FCE9E7' },
-  messageSuccess: { backgroundColor: '#E7F4E8' },
-  messageText: { flex: 1, fontSize: 12, lineHeight: 17, fontWeight: '700' },
-  messageTextError: { color: '#8E3F3A' },
-  messageTextSuccess: { color: '#246B4A' },
-  primaryButton: { minHeight: 55, marginTop: 18, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, borderRadius: 17, backgroundColor: '#246B4A' },
-  primaryButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '900' },
-  pressed: { opacity: 0.88, transform: [{ scale: 0.99 }] },
-  disabled: { opacity: 0.65 },
-  divider: { marginTop: 19, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: '#E1E4DD' },
-  dividerText: { color: '#919A95', fontSize: 11, fontWeight: '700' },
-  demoHint: { marginTop: 13, color: '#68756F', fontSize: 12, textAlign: 'center' },
-  demoStrong: { color: '#33463D', fontWeight: '900' },
-  registerLink: { minHeight: 44, marginTop: 8, alignItems: 'center', justifyContent: 'center' },
-  registerText: { color: '#68756F', fontSize: 13 },
-  privacyRow: { marginTop: 17, paddingHorizontal: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
-  privacyText: { color: '#68756F', fontSize: 11, fontWeight: '600' },
+  safe: { flex: 1, backgroundColor: COLORS.background, ...GRADIENTS.ambient },
+  loading: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  content: {
+    flexGrow: 1,
+    justifyContent: "center",
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.xl,
+    width: "100%",
+    maxWidth: LAYOUT.formMaxWidth,
+    alignSelf: "center",
+  },
+  brand: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: SPACING.xl,
+  },
+  form: { gap: SPACING.md },
+  title: {
+    ...TYPE.headline,
+    color: COLORS.text,
+    marginBottom: SPACING.xs,
+  },
+  description: { ...TYPE.subhead, color: COLORS.textMuted },
+  fieldWrap: { gap: SPACING.sm },
+  label: { ...TYPE.label, color: COLORS.text },
+  field: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.controlBorder,
+    borderRadius: RADIUS.md,
+    borderCurve: "continuous",
+    backgroundColor: COLORS.surface,
+    minHeight: LAYOUT.control,
+  },
+  input: {
+    flex: 1,
+    ...INPUT.singleLine,
+    minWidth: 0,
+    borderRadius: RADIUS.md,
+    borderCurve: "continuous",
+  },
+  password: { paddingRight: 0 },
+  eye: {
+    width: LAYOUT.touch,
+    minHeight: LAYOUT.control,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  options: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    gap: SPACING.sm,
+    marginTop: -SPACING.sm,
+    marginBottom: -SPACING.sm,
+  },
+  optionButton: {
+    minHeight: LAYOUT.touch,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.sm,
+    borderRadius: RADIUS.sm,
+    borderCurve: "continuous",
+  },
+  optionText: { ...TYPE.subhead, color: COLORS.textMuted },
+  link: { ...TYPE.label, color: COLORS.primaryDark },
+  message: { ...TYPE.subhead, color: COLORS.primaryDark },
+  error: { color: COLORS.danger },
+  primary: {
+    minHeight: LAYOUT.control,
+    borderRadius: RADIUS.md,
+    borderCurve: "continuous",
+    backgroundColor: COLORS.actionSurface,
+    ...GRADIENTS.action,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: SPACING.compact,
+    padding: SPACING.md,
+  },
+  primaryText: { ...TYPE.label, color: COLORS.onAction, flexShrink: 1 },
+  socialOptions: { gap: SPACING.sm },
+  socialDivider: { flexDirection: "row", alignItems: "center", gap: SPACING.compact, paddingVertical: SPACING.xs },
+  dividerLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: COLORS.border },
+  pressed: { opacity: INTERACTION.pressedOpacity },
+  disabled: { opacity: INTERACTION.disabledOpacity },
+  switchMode: {
+    minHeight: LAYOUT.touch,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: -SPACING.xs,
+  },
 });

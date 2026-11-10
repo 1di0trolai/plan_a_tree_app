@@ -1,540 +1,992 @@
-import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
-import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react';
+/** Hiển thị khu vườn, chuyển giữa các cây và theo dõi tiến trình chăm sóc, quà thưởng cùng cây lưu trữ. */
+
+import { t, useI18n } from "@/i18n";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AccessibilityInfo,
   ActivityIndicator,
   Alert,
-  FlatList,
+  Animated,
+  type FlatListInstance,
   Image,
-  KeyboardAvoidingView,
   Modal,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   useWindowDimensions,
   View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { JourneyButton, phaseLabels } from "@/components/journeyUI";
+import { localDateKey } from "@/data/seed";
+import { PET_CAPACITY } from "@/data/petProgression";
+import { useControlFocus } from "@/hooks/useControlFocus";
+import { scheduleGardenNoticeDismiss } from "@/screens/garden/gardenFeedback";
+import { GardenDots } from "@/screens/garden/GardenDots";
+import { gardenViewportBudget } from "@/screens/garden/gardenLayout";
+import {
+  gardenPlantAtOffset,
+  getGardenNavigation,
+} from "@/screens/garden/gardenNavigation";
+import { useApp } from "@/store/AppStore";
+import {
+  archivedGardenPlants,
+  visibleGardenPlants,
+} from "@/store/journeyActions";
+import {
+  COLORS,
+  GRADIENTS,
+  INTERACTION,
+  LAYOUT,
+  RADIUS,
+  SHADOWS,
+  SPACING,
+  TYPE,
+} from "@/theme";
+import type { Plant } from "@/types/app";
+import { getCurrentPlantStreak } from "@/utils/plantStreak";
 
-import { localDateKey } from '@/data/seed';
-import { useApp } from '@/store/AppStore';
-import { COLORS, RADIUS, SHADOWS, SPACING } from '@/theme';
-import type { Plant, PlantChibi } from '@/types/app';
-
-type SheetName = 'care' | 'history' | 'timelapse' | null;
-
-const PALETTE = {
-  ...COLORS,
-  primarySoft: '#DDECD8',
-};
-
-const PLANT_EMOJIS = ['🌿', '🪴', '🌵', '🌻', '🍀', '🌱'];
-
-function formatDate(value?: string) {
-  if (!value) return 'Chưa có dữ liệu';
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return new Intl.DateTimeFormat('vi-VN', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  }).format(parsed);
-}
-
-function IconButton({ icon, label, onPress }: {
-  icon: ComponentProps<typeof Ionicons>['name'];
-  label: string;
-  onPress: () => void;
-}) {
+/** Neutral illustration, never presented as a generated chibi or a real photo. */
+function PlantSketch({ compact = false }: { compact?: boolean }) {
   return (
-    <Pressable
-      accessibilityLabel={label}
-      accessibilityRole="button"
-      hitSlop={10}
-      onPress={onPress}
-      style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}>
-      <Ionicons name={icon} size={20} color={PALETTE.text} />
-    </Pressable>
+    <View
+      style={[styles.sketchFrame, compact && styles.sketchFrameCompact]}
+      accessible={false}
+      importantForAccessibility="no-hide-descendants"
+    >
+      <View style={[styles.sketch, compact && styles.sketchCompact]}>
+        <View style={styles.sketchHalo} />
+        <View style={styles.sketchGround} />
+        <View style={styles.sketchStem} />
+        <View style={styles.sketchLeafLeft} />
+        <View style={styles.sketchLeafRight} />
+        <View style={styles.sketchLeafTop} />
+      </View>
+    </View>
   );
 }
 
-function PlantAvatar({ chibi, label, large = false }: { chibi?: PlantChibi; label: string; large?: boolean }) {
-  if (chibi?.imageUri) {
-    return (
-      <Image
-        accessibilityLabel={`Ảnh chibi của ${label}`}
-        resizeMode="cover"
-        source={{ uri: chibi.imageUri }}
-        style={large ? styles.plantChibiImage : styles.smallChibiImage}
-      />
-    );
-  }
-
-  return (
-    <View style={large ? styles.plantEmojiWrap : styles.smallChibiWrap}>
-      {large && <View style={styles.plantGlow} />}
-      <Text style={large ? styles.plantEmoji : styles.smallChibiEmoji}>
-        {chibi?.fallbackEmoji ?? '🪴'}
+function PlantPortrait({
+  uri,
+  name,
+  isChibi,
+}: {
+  uri?: string;
+  name: string;
+  isChibi: boolean;
+}) {
+  useI18n();
+  const [unavailable, setUnavailable] = useState(false);
+  return uri && !unavailable ? (
+    <Image
+      source={{ uri }}
+      style={StyleSheet.absoluteFill}
+      resizeMode={isChibi ? "contain" : "cover"}
+      accessibilityLabel={t(isChibi ? "Chibi {name}" : "Ảnh thật {name}", { name })}
+      onError={() => setUnavailable(true)}
+    />
+  ) : (
+    <View style={styles.placeholder}>
+      <PlantSketch compact />
+      <Text style={styles.placeholderCaption}>
+        {uri ? t("Ảnh chưa tải được") : t("Chưa có ảnh cây")}
       </Text>
     </View>
   );
 }
 
-function Sheet({ visible, title, onClose, children }: {
-  visible: boolean;
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <Modal animationType="slide" onRequestClose={onClose} statusBarTranslucent transparent visible={visible}>
-      <View style={styles.modalBackdrop}>
-        <Pressable accessibilityLabel="Đóng cửa sổ" accessibilityRole="button" onPress={onClose} style={StyleSheet.absoluteFill} />
-        <SafeAreaView edges={['bottom']} style={styles.sheet}>
-          <View style={styles.sheetHandle} />
-          <View style={styles.sheetHeader}>
-            <Text style={styles.sheetTitle}>{title}</Text>
-            <IconButton icon="close" label="Đóng" onPress={onClose} />
-          </View>
-          {children}
-        </SafeAreaView>
-      </View>
-    </Modal>
-  );
-}
-
 export default function GardenScreen() {
-  const { ready, state, activePlant, activePlantIndex, setActivePlantIndex, addPlant } = useApp();
-  const { width } = useWindowDimensions();
-  const plantListRef = useRef<FlatList<Plant>>(null);
-  const [sheet, setSheet] = useState<SheetName>(null);
-  const [addVisible, setAddVisible] = useState(false);
-  const [plantName, setPlantName] = useState('');
-  const [plantSpecies, setPlantSpecies] = useState('');
-  const [plantEmoji, setPlantEmoji] = useState(PLANT_EMOJIS[0]);
-  const [formError, setFormError] = useState('');
-
-  const plants = state.plants;
-  const activeChibi = state.plantChibis.find((entry) => entry.plantId === activePlant?.id);
-  const history = state.checkIns.filter((entry) => entry.plantId === activePlant?.id);
-  const latestCheckIn = history[0];
-  const latestAnalysis = state.plantAnalyses.find((entry) => entry.id === latestCheckIn?.analysisId)?.result;
-  const checkedInToday = activePlant?.lastCheckIn === localDateKey();
-  const arUsedToday = state.daily.lastCatchDate === localDateKey();
-
-  // The active plant can also change from Profile or after adding/removing a plant.
-  useEffect(() => {
-    plantListRef.current?.scrollToOffset({ offset: width * activePlantIndex, animated: false });
-  }, [activePlantIndex, width, plants.length]);
-
-  const resetAddForm = () => {
-    setPlantName('');
-    setPlantSpecies('');
-    setPlantEmoji(PLANT_EMOJIS[0]);
-    setFormError('');
-  };
-
-  const submitPlant = () => {
-    const cleanName = plantName.trim();
-    const cleanSpecies = plantSpecies.trim();
-    if (cleanName.length < 2 || cleanSpecies.length < 2) {
-      setFormError('Hãy nhập tên và loại cây, mỗi mục ít nhất 2 ký tự.');
+  useI18n();
+  const focus = useControlFocus();
+  const { gardenNotice } = useLocalSearchParams<{ gardenNotice?: string }>();
+  const {
+    ready,
+    state,
+    activePlant,
+    setActivePlantIndex,
+    restorePlant,
+    persistNow,
+  } = useApp();
+  const { width, height, fontScale } = useWindowDimensions();
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [metadataMeasure, setMetadataMeasure] = useState({
+    width: 0,
+    fontScale: 0,
+    height: 0,
+  });
+  const [progressHeight, setProgressHeight] = useState(0);
+  const list = useRef<FlatListInstance>(null);
+  const animateSelection = useRef(false);
+  const [scrollOffset] = useState(() => new Animated.Value(0));
+  const [reduceMotion, setReduceMotion] = useState(true);
+  const restoreLock = useRef(false);
+  const screenActive = useRef(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [restoring, setRestoring] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ message: string } | null>(null);
+  const plants = visibleGardenPlants(state);
+  const archived = archivedGardenPlants(state);
+  const navigation = getGardenNavigation(plants, activePlant?.id);
+  const activeIndex = navigation.index;
+  const current = plants[activeIndex];
+  const today = localDateKey();
+  const round = state.dailyRounds.find((entry) => entry.date === today);
+  const pending = state.dailyPacks.find((pack) => !pack.revealedAt);
+  const openPack = () => {
+    if (!pending) return;
+    if (pending.creditedAt === null && state.inventory.pets.length >= PET_CAPACITY) {
+      Alert.alert(t("Kho thú nuôi đã đầy"), t("Hãy dọn kho để nhận quà. Hộp quà vẫn được giữ."), [
+        { text: t("Để sau"), style: "cancel" },
+        { text: t("Dọn kho"), onPress: () => router.push("/(tabs)/inventory") },
+      ]);
       return;
     }
-    addPlant({ name: cleanName, species: cleanSpecies, emoji: plantEmoji });
-    setAddVisible(false);
-    resetAddForm();
+    router.push({ pathname: "/reward-pack", params: { packId: pending.id } });
+  };
+  const completed = round?.inspectedPlantIds.length ?? 0;
+  const total =
+    round?.plantIds.length ??
+    plants.filter((plant) => plant.journey.phase !== "planning").length;
+  // Measure the space below the safe-area header and above the navigator's tab
+  // bar. Shrink only the photo; larger text and short/landscape screens can scroll.
+  const metadataHeight =
+    metadataMeasure.width === width && metadataMeasure.fontScale === fontScale
+      ? metadataMeasure.height
+      : (TYPE.title.lineHeight + TYPE.caption.lineHeight) * fontScale +
+        SPACING.xs;
+  const { imageHeight: portraitHeight } = gardenViewportBudget({
+    viewportHeight: viewportHeight || height / 2,
+    imageWidth: width - SPACING.page * 2,
+    metadataHeight,
+    progressHeight: progressHeight || SPACING.hero,
+    indicatorHeight: LAYOUT.touch,
+    cardGap: SPACING.sm,
+    bottomPadding: SPACING.sm,
+    minimumImageHeight: LAYOUT.artwork + SPACING.lg,
+    maximumImageHeight: LAYOUT.formMaxWidth,
+  });
+  useEffect(() => {
+    list.current?.scrollToOffset({
+      offset: activeIndex * width,
+      animated: animateSelection.current && !reduceMotion,
+    });
+    animateSelection.current = false;
+  }, [activeIndex, activePlant?.id, width, plants.length, reduceMotion]);
+
+  useEffect(() => {
+    let mounted = true;
+    void AccessibilityInfo.isReduceMotionEnabled()
+      .then((value) => {
+        if (mounted) setReduceMotion(value);
+      })
+      .catch(() => {});
+    const subscription = AccessibilityInfo.addEventListener(
+      "reduceMotionChanged",
+      setReduceMotion,
+    );
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      screenActive.current = true;
+      return () => {
+        screenActive.current = false;
+        setNotice(null);
+      };
+    }, []),
+  );
+  useFocusEffect(
+    useCallback(() => {
+      if (!gardenNotice) return;
+      setNotice({ message: gardenNotice });
+      // Consume the navigation hand-off once; revisiting the tab must not replay it.
+      router.setParams({ gardenNotice: undefined });
+    }, [gardenNotice]),
+  );
+  useEffect(() => {
+    if (!notice) return;
+    if (Platform.OS === "ios") {
+      AccessibilityInfo.announceForAccessibilityWithOptions(notice.message, {
+        queue: true,
+      });
+    }
+    return scheduleGardenNoticeDismiss(() => setNotice(null));
+  }, [notice]);
+
+  const selectPlant = (plantId: string | null) => {
+    if (!plantId) return;
+    const index = state.plants.findIndex(
+      (plant) => plant.id === plantId && !plant.archived,
+    );
+    if (index >= 0) setActivePlantIndex(index);
+  };
+  const moveToNeighbor = (plantId: string | null) => {
+    if (!plantId) return;
+    animateSelection.current = true;
+    selectPlant(plantId);
   };
 
-  const onPlantScrollEnd = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    if (width <= 0) return;
-    const index = Math.round(event.nativeEvent.contentOffset.x / width);
-    if (plants[index] && index !== activePlantIndex) setActivePlantIndex(index);
+  const openPlant = (pathname: "/plant-detail" | "/plant-chat") => {
+    if (current) router.push({ pathname, params: { plantId: current.id } });
+  };
+  const restore = async (plant: Plant) => {
+    if (restoreLock.current) return;
+    restoreLock.current = true;
+    setRestoring(plant.id);
+    try {
+      const result = restorePlant(plant.id);
+      if (!result.ok) {
+        Alert.alert(t("Chưa thể khôi phục"), t(result.message));
+        return;
+      }
+      await persistNow();
+      if (!screenActive.current) return;
+      setShowArchived(false);
+      setNotice({ message: t("Đã đưa {name} về vườn.", { name: plant.name }) });
+    } catch {
+      Alert.alert(
+        t("Chưa lưu xuống máy"),
+        t("Cây đã xuất hiện trong phiên này. Hãy thử lưu lại trước khi đóng ứng dụng."),
+        [
+          { text: t("Đóng"), style: "cancel" },
+          { text: t("Thử lưu lại"), onPress: () => void restore(plant) },
+        ],
+      );
+    } finally {
+      restoreLock.current = false;
+      setRestoring(null);
+    }
   };
 
-  const selectPlant = (index: number) => {
-    setActivePlantIndex(index);
-    plantListRef.current?.scrollToIndex({ index, animated: true });
-  };
-
-  const openCamera = () => router.navigate('/(tabs)/camera');
-  const openArHunt = () => {
-    if (!activePlant) return;
-    router.push({ pathname: '/ar-hunt', params: { plantId: activePlant.id } });
-  };
-
-  if (!ready) {
+  if (!ready)
     return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.centerState} accessibilityRole="progressbar">
-          <ActivityIndicator color={PALETTE.primary} size="large" />
-          <Text style={styles.stateTitle}>Đang mở khu vườn...</Text>
-        </View>
+      <SafeAreaView style={styles.safe}>
+        <ActivityIndicator style={styles.loading} color={COLORS.primary} />
       </SafeAreaView>
     );
-  }
-
   return (
-    <SafeAreaView edges={['top']} style={styles.safeArea}>
+    <SafeAreaView edges={["top"]} style={styles.safe}>
       <View style={styles.header}>
-        <View>
-          <Text style={styles.eyebrow}>KHU VƯỜN THẬT CỦA BẠN</Text>
-          <Text style={styles.headerTitle}>Chào buổi sáng 👋</Text>
+        <View style={styles.brandRow}>
+          <Ionicons
+            name="leaf"
+            size={LAYOUT.smallIcon}
+            color={COLORS.primary}
+          />
+          <Text style={styles.brand}>{t("PAT / NHẬT KÝ CHĂM CÂY")}</Text>
         </View>
-        <IconButton icon="notifications-outline" label="Xem thông báo" onPress={() => Alert.alert('Thông báo', 'Bạn chưa có thông báo mới.')} />
-      </View>
-
-      {plants.length === 0 ? (
-        <View style={styles.centerState}>
-          <View style={styles.emptyIcon}><Text style={styles.emptyEmoji}>🌱</Text></View>
-          <Text style={styles.stateTitle}>Khu vườn đang trống</Text>
-          <Text style={styles.stateCaption}>Thêm cây thật đầu tiên để bắt đầu theo dõi mỗi ngày.</Text>
-          <Pressable onPress={() => setAddVisible(true)} style={styles.primaryButton}>
-            <Ionicons name="add" size={21} color={PALETTE.white} />
-            <Text style={styles.primaryButtonText}>Thêm cây đầu tiên</Text>
+        <View style={styles.row}>
+          <View style={styles.flex}>
+            <Text style={styles.title}>{t("Khu vườn")}</Text>
+            <Text style={styles.subtitle}>
+              {plants.length
+                ? t("{count} cây đang đồng hành", { count: plants.length })
+                : t("Một chút xanh, mỗi ngày.")}
+            </Text>
+          </View>
+          <Pressable
+            {...focus.props("add-plant")}
+            accessibilityLabel={t("Thêm cây mới")}
+            accessibilityRole="button"
+            onPress={() => router.push("/add-plant")}
+            style={({ pressed }) => [
+              styles.add,
+              pressed && styles.pressed,
+              focus.style("add-plant"),
+            ]}
+          >
+            <Ionicons
+              name="add"
+              size={LAYOUT.icon}
+              color={COLORS.primaryDark}
+            />
           </Pressable>
         </View>
-      ) : (
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <View style={styles.sectionHeadingRow}>
-            <View>
-              <Text style={styles.sectionTitle}>Những người bạn xanh</Text>
-              <Text style={styles.sectionCaption}>Vuốt ngang để đổi cây</Text>
-            </View>
-            <Pressable onPress={() => setAddVisible(true)} style={styles.addPlantButton}>
-              <Ionicons name="add" size={18} color={PALETTE.primaryDark} />
-              <Text style={styles.addPlantText}>Thêm cây</Text>
-            </Pressable>
-          </View>
-
-          <FlatList
-            data={plants}
-            getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
-            horizontal
-            initialScrollIndex={activePlantIndex > 0 ? activePlantIndex : undefined}
-            keyExtractor={(item) => item.id}
-            onMomentumScrollEnd={onPlantScrollEnd}
-            pagingEnabled
-            ref={plantListRef}
-            showsHorizontalScrollIndicator={false}
-            renderItem={({ item }) => {
-              const chibi = state.plantChibis.find((entry) => entry.plantId === item.id);
-              return (
-                <View style={[styles.plantPage, { width }]}>
-                  <LinearGradient colors={['#EEF5DF', '#DCE9D4']} style={styles.plantCard}>
-                    <View style={styles.plantCardTop}>
-                      <View>
-                        <Text style={styles.plantName}>{item.name}</Text>
-                        <Text style={styles.plantSpecies}>{item.species}</Text>
+      </View>
+      <ScrollView
+        style={styles.flex}
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
+      >
+        {plants.length ? (
+          <>
+            <Animated.FlatList<Plant>
+              style={styles.carousel}
+              ref={list}
+              data={plants}
+              horizontal
+              pagingEnabled
+              onScroll={Animated.event(
+                [{ nativeEvent: { contentOffset: { x: scrollOffset } } }],
+                { useNativeDriver: true },
+              )}
+              scrollEventThrottle={16}
+              showsHorizontalScrollIndicator={false}
+              keyExtractor={(item) => item.id}
+              getItemLayout={(_, index) => ({
+                length: width,
+                offset: index * width,
+                index,
+              })}
+              onMomentumScrollEnd={(event) => {
+                selectPlant(
+                  gardenPlantAtOffset(
+                    plants,
+                    event.nativeEvent.contentOffset.x,
+                    width,
+                  ),
+                );
+              }}
+              renderItem={({ item }) => {
+                const chibi = state.plantChibis.find(
+                  (entry) => entry.plantId === item.id,
+                );
+                const photo = state.plantPhotos.find(
+                  (entry) => entry.plantId === item.id,
+                );
+                const imageUri =
+                  photo?.imageUri || chibi?.imageUri || undefined;
+                const isChibi = !photo?.imageUri && !!chibi?.imageUri;
+                const checked = item.lastCheckIn === today;
+                const currentStreak = getCurrentPlantStreak(item);
+                return (
+                  <View style={[styles.page, { width }]}>
+                    <Pressable
+                      {...focus.props(`plant-${item.id}`)}
+                      accessibilityRole="button"
+                      accessibilityLabel={t("Hồ sơ {name}, {species}, {phase}", { name: item.name, species: item.species, phase: t(phaseLabels[item.journey.phase]) })}
+                      onPress={() =>
+                        router.push({
+                          pathname: "/plant-detail",
+                          params: { plantId: item.id },
+                        })
+                      }
+                      style={({ pressed }) => [
+                        styles.plant,
+                        pressed && styles.plantPressed,
+                        focus.style(`plant-${item.id}`),
+                      ]}
+                    >
+                      <View
+                        style={[styles.portrait, { height: portraitHeight }]}
+                      >
+                        <PlantPortrait
+                          key={`${item.id}:${imageUri ?? "empty"}`}
+                          uri={imageUri}
+                          name={item.name}
+                          isChibi={isChibi}
+                        />
+                        <View style={styles.photoTop}>
+                          <View style={styles.phaseBadge}>
+                            <Text style={styles.phaseText}>
+                              {t(phaseLabels[item.journey.phase])}
+                            </Text>
+                          </View>
+                        </View>
                       </View>
-                      <View style={styles.healthPill}>
-                        <Ionicons name="heart" size={14} color={PALETTE.primary} />
-                        <Text style={styles.healthPillText}>{item.health}</Text>
+                      <View
+                        style={styles.metadata}
+                        onLayout={(event) => {
+                          const measured = event.nativeEvent.layout.height;
+                          setMetadataMeasure((previous) => ({
+                            width,
+                            fontScale,
+                            height:
+                              previous.width === width &&
+                              previous.fontScale === fontScale
+                                ? Math.max(previous.height, measured)
+                                : measured,
+                          }));
+                        }}
+                      >
+                        <View style={styles.plantDescription}>
+                          <Text style={styles.plantName}>{item.name}</Text>
+                          {currentStreak > 0 ? (
+                            <View style={styles.streakBadge} accessible accessibilityLabel={t("Chuỗi hiện tại {count} ngày", { count: currentStreak })}>
+                              <Ionicons
+                                name="flame-outline"
+                                size={LAYOUT.smallIcon}
+                                color={COLORS.warning}
+                              />
+                              <Text style={styles.streakText}>
+                                {currentStreak}
+                              </Text>
+                            </View>
+                          ) : null}
+                        </View>
+                        <View style={styles.statusRow}>
+                          <View
+                            style={[
+                              styles.statusDot,
+                              checked && styles.statusDotDone,
+                            ]}
+                          />
+                          <Text style={styles.status}>
+                            {item.journey.phase === "planning"
+                              ? t("Chưa bắt đầu trồng")
+                              : checked
+                                ? t("Đã kiểm tra hôm nay")
+                                : t("Chưa kiểm tra hôm nay")}
+                          </Text>
+                        </View>
                       </View>
-                    </View>
-                    <View style={styles.plantVisual}>
-                      <PlantAvatar chibi={chibi} label={item.name} large />
-                      <View style={styles.chibiBadge}>
-                        <Ionicons name="sparkles" size={12} color={PALETTE.primaryDark} />
-                        <Text style={styles.chibiBadgeText}>CHIBI</Text>
-                      </View>
-                    </View>
-                    <View style={styles.stageRow}>
-                      <View><Text style={styles.stageLabel}>Giai đoạn hiện tại</Text><Text style={styles.stageValue}>{item.stage}</Text></View>
-                      <Text style={styles.progressValue}>{item.progress}%</Text>
-                    </View>
-                    <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${Math.min(item.progress, 100)}%` }]} /></View>
-                  </LinearGradient>
+                    </Pressable>
+                  </View>
+                );
+              }}
+            />
+            <GardenDots
+              offset={scrollOffset}
+              pageWidth={width}
+              index={activeIndex}
+              count={plants.length}
+              reduceMotion={reduceMotion}
+              onPrevious={() => moveToNeighbor(navigation.previous)}
+              onNext={() => moveToNeighbor(navigation.next)}
+            />
+            <View
+              style={styles.section}
+              onLayout={(event) =>
+                setProgressHeight(event.nativeEvent.layout.height)
+              }
+            >
+              {total > 0 ? (
+                <View style={styles.progress}>
+                  <View style={styles.row}>
+                    <Text style={styles.sectionTitle}>{t("Chuyến thăm hôm nay")}</Text>
+                    <Text style={styles.progressCount}>
+                      {Math.min(completed, total)}
+                      <Text style={styles.progressTotal}> / {total}</Text>
+                    </Text>
+                  </View>
+                  <View
+                    style={styles.track}
+                    accessibilityRole="progressbar"
+                    accessibilityLabel={t("Cây đã kiểm tra hôm nay")}
+                    accessibilityValue={{
+                      min: 0,
+                      max: total,
+                      now: Math.min(completed, total),
+                    }}
+                  >
+                    <View
+                      style={[
+                        styles.fill,
+                        {
+                          width: `${Math.min(100, (completed / total) * 100)}%`,
+                        },
+                      ]}
+                    />
+                  </View>
                 </View>
-              );
-            }}
-          />
-
-          <View style={styles.paginationRow}>
-            <View style={styles.dots}>
-              {plants.map((plant, index) => (
-                <Pressable
-                  accessibilityLabel={`Chuyển tới cây ${plant.name}`}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: index === activePlantIndex }}
-                  hitSlop={7}
-                  key={plant.id}
-                  onPress={() => selectPlant(index)}
-                  style={[styles.dot, index === activePlantIndex && styles.dotActive]}
+              ) : (
+                <Text style={styles.planningHint}>
+                  {t("Bắt đầu trồng để cùng cây tạo thói quen mỗi ngày.")}</Text>
+              )}
+              <View style={[styles.gardenActions, fontScale >= 1.3 && styles.gardenActionsStack]}>
+              {current ? (
+                <JourneyButton
+                  title={
+                    current.journey.phase === "planning"
+                      ? t("Bắt đầu trồng")
+                      : t("Chăm sóc cây")
+                  }
+                  icon="leaf-outline"
+                  secondary={Boolean(pending)}
+                  size="sm"
+                  style={styles.careAction}
+                  testID="garden-plant-care"
+                  onPress={() =>
+                    openPlant(
+                      current.journey.phase === "planning"
+                        ? "/plant-detail"
+                        : "/plant-chat",
+                    )
+                  }
                 />
-              ))}
+              ) : null}
+              {pending ? (
+                <JourneyButton
+                  title={t("Nhận quà")}
+                  icon="gift-outline"
+                  testID="garden-open-pack"
+                  size="sm"
+                  style={styles.claimAction}
+                  onPress={openPack}
+                />
+              ) : null}
+              </View>
+              {archived.length ? (
+                <Pressable
+                  {...focus.props("archives")}
+                  accessibilityRole="button"
+                  onPress={() => setShowArchived(true)}
+                  style={({ pressed }) => [
+                    styles.archiveLink,
+                    pressed && styles.pressed,
+                    focus.style("archives"),
+                  ]}
+                  testID="garden-archived-plants"
+                >
+                  <Ionicons
+                    name="archive-outline"
+                    size={LAYOUT.smallIcon}
+                    color={COLORS.textMuted}
+                    accessible={false}
+                  />
+                  <Text style={styles.archiveText}>
+                    {t("Cây đã lưu trữ ({count})", { count: archived.length })}
+                  </Text>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={LAYOUT.smallIcon}
+                    color={COLORS.textMuted}
+                    accessible={false}
+                  />
+                </Pressable>
+              ) : null}
             </View>
-            <Text style={styles.counterText}>{activePlantIndex + 1}/{plants.length}</Text>
+          </>
+        ) : (
+          <View style={styles.empty}>
+            <View style={styles.emptyArt}>
+              <Image
+                source={require("../../../assets/tree_740934.png")}
+                style={styles.sketchFrame}
+                resizeMode="contain"
+                accessible={false}
+                testID="garden-empty-tree"
+              />
+            </View>
+            <Text style={styles.emptyTitle}>
+              {archived.length
+                ? t("Đưa màu xanh trở lại")
+                : t("Bắt đầu từ\nmột mầm xanh.")}
+            </Text>
+            <Text style={styles.emptyDescription}>
+              {archived.length
+                ? t("Cây đã lưu trữ vẫn giữ nguyên ảnh và nhật ký. Bạn có thể đưa cây về vườn bất cứ lúc nào.")
+                : t("Chụp một quả, hạt giống hoặc cây của bạn. PAT sẽ cùng bạn chăm sóc từng ngày.")}
+            </Text>
+            <View style={styles.emptyButton}>
+              <JourneyButton
+                title={archived.length ? t("Thêm cây mới") : t("Thêm cây đầu tiên")}
+                icon="add"
+                onPress={() => router.push("/add-plant")}
+              />
+            </View>
+            {archived.length ? (
+              <JourneyButton
+                title={t("Cây đã lưu trữ ({count})", { count: archived.length })}
+                icon="archive-outline"
+                variant="ghost"
+                onPress={() => setShowArchived(true)}
+                testID="garden-archived-plants"
+              />
+            ) : null}
+            {pending ? (
+              <JourneyButton
+                title={t("Nhận quà")}
+                icon="gift-outline"
+                testID="garden-open-pack"
+                size="sm"
+                onPress={openPack}
+              />
+            ) : null}
           </View>
-
-          <View style={styles.streakCard}>
-            <View style={styles.streakIcon}><Ionicons name="flame" size={26} color="#E88735" /></View>
-            <View style={styles.streakCopy}>
-              <Text style={styles.streakTitle}>{activePlant.streak} ngày liên tiếp</Text>
-              <Text style={styles.streakCaption}>Kỷ lục {activePlant.bestStreak} ngày · {checkedInToday ? 'Đã check-in hôm nay' : 'Đang chờ bạn'}</Text>
+        )}
+      </ScrollView>
+      <Modal
+        visible={showArchived}
+        presentationStyle="pageSheet"
+        animationType="slide"
+        allowSwipeDismissal
+        onRequestClose={() => setShowArchived(false)}
+      >
+        <SafeAreaView style={styles.safe}>
+          <View style={styles.sheetHeader}>
+            <View style={styles.flex}>
+              <Text style={styles.sectionTitle}>{t("Cây đã lưu trữ")}</Text>
+              <Text style={styles.subtitle}>{t("Ảnh và nhật ký vẫn ở đây.")}</Text>
             </View>
-            <Ionicons color={checkedInToday ? PALETTE.primary : PALETTE.warning} name={checkedInToday ? 'checkmark-circle' : 'time-outline'} size={25} />
-          </View>
-
-          <View style={styles.dailyCard}>
-            <View style={styles.dailyHeader}>
-              <View>
-                <Text style={styles.dailyEyebrow}>CHECK-IN CÂY THẬT</Text>
-                <Text style={styles.dailyTitle}>{checkedInToday ? 'Ảnh hôm nay đã được lưu' : `Chụp ${activePlant.name} hôm nay`}</Text>
-              </View>
-              <View style={[styles.statusBadge, checkedInToday && styles.statusBadgeDone]}>
-                <Text style={[styles.statusBadgeText, checkedInToday && styles.statusBadgeTextDone]}>{checkedInToday ? 'Hoàn thành' : '+1 streak'}</Text>
-              </View>
-            </View>
-            <Text style={styles.dailyCaption}>Camera có màn hình riêng để lưu ảnh thật, tạo phân tích mẫu và cập nhật đại diện chibi.</Text>
-            <Pressable onPress={openCamera} style={({ pressed }) => [styles.cameraCta, pressed && styles.pressed]}>
-              <View style={styles.cameraCtaIcon}><Ionicons name="camera" size={24} color={PALETTE.white} /></View>
-              <View style={styles.cameraCtaCopy}>
-                <Text style={styles.cameraCtaTitle}>Mở Camera check-in</Text>
-                <Text style={styles.cameraCtaCaption}>Chụp mới hoặc chọn ảnh có sẵn</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={21} color={PALETTE.white} />
+            <Pressable
+              {...focus.props("close-archives")}
+              accessibilityRole="button"
+              onPress={() => setShowArchived(false)}
+              style={({ pressed }) => [
+                styles.done,
+                pressed && styles.pressed,
+                focus.style("close-archives"),
+              ]}
+            >
+              <Text style={styles.doneText}>{t("Xong")}</Text>
             </Pressable>
           </View>
-
-          <View style={styles.quickActions}>
-            {[
-              { key: 'care' as const, icon: 'water-outline' as const, label: 'Chăm sóc' },
-              { key: 'history' as const, icon: 'calendar-outline' as const, label: 'Lịch sử' },
-              { key: 'timelapse' as const, icon: 'play-circle-outline' as const, label: 'Time-lapse' },
-            ].map((action) => (
-              <Pressable key={action.key} onPress={() => setSheet(action.key)} style={styles.quickAction}>
-                <View style={styles.quickIcon}><Ionicons name={action.icon} size={22} color={PALETTE.primaryDark} /></View>
-                <Text style={styles.quickLabel}>{action.label}</Text>
-              </Pressable>
+          <ScrollView contentContainerStyle={styles.archivedList}>
+            {archived.map((plant) => (
+              <View key={plant.id} style={styles.archivedItem}>
+                <View style={styles.archivedHeading}>
+                  <Ionicons
+                    name="leaf-outline"
+                    size={LAYOUT.icon}
+                    color={COLORS.primary}
+                  />
+                  <View style={styles.flex}>
+                    <Text style={styles.archivedName}>{plant.name}</Text>
+                    <Text style={styles.species}>{plant.species}</Text>
+                  </View>
+                </View>
+                <JourneyButton
+                  title={t("Khôi phục về vườn")}
+                  secondary
+                  loading={restoring === plant.id}
+                  disabled={!!restoring}
+                  onPress={() => void restore(plant)}
+                />
+              </View>
             ))}
-          </View>
-
-          <LinearGradient colors={arUsedToday ? ['#EEEFEA', '#E4E6DF'] : ['#334D42', '#1C342A']} style={styles.arCard}>
-            <View style={styles.arIconWrap}><Ionicons name={arUsedToday ? 'lock-closed' : 'scan'} size={28} color={arUsedToday ? PALETTE.textMuted : '#CDEFBF'} /></View>
-            <View style={styles.arCopy}>
-              <Text style={[styles.arEyebrow, arUsedToday && styles.arMuted]}>SĂN THÚ QUANH {activePlant.name.toLocaleUpperCase('vi')}</Text>
-              <Text style={[styles.arTitle, arUsedToday && styles.arTitleMuted]}>{arUsedToday ? 'Hẹn gặp lại ngày mai' : 'Mở camera và tìm dấu vết'}</Text>
-              <Text style={[styles.arCaption, arUsedToday && styles.arMuted]}>{arUsedToday ? 'Bạn đã dùng lượt săn chung hôm nay.' : 'Lượt săn gắn với cây này, nhưng giới hạn là 1 lượt chung mỗi ngày.'}</Text>
-            </View>
-            <Pressable onPress={openArHunt} style={[styles.arButton, arUsedToday && styles.arButtonDisabled]}>
-              <Text style={[styles.arButtonText, arUsedToday && styles.arButtonTextDisabled]}>{arUsedToday ? 'Xem trạng thái' : 'Săn ngay'}</Text>
-            </Pressable>
-          </LinearGradient>
-        </ScrollView>
-      )}
-
-      <Modal animationType="slide" onRequestClose={() => setAddVisible(false)} visible={addVisible}>
-        <SafeAreaView style={styles.fullModal}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
-            <View style={styles.fullModalHeader}>
-              <IconButton icon="close" label="Đóng thêm cây" onPress={() => { setAddVisible(false); resetAddForm(); }} />
-              <Text style={styles.fullModalTitle}>Thêm cây thật</Text>
-              <View style={styles.headerSpacer} />
-            </View>
-            <ScrollView contentContainerStyle={styles.formContent} keyboardShouldPersistTaps="handled">
-              <View style={styles.formHero}><Text style={styles.formEmoji}>{plantEmoji}</Text></View>
-              <Text style={styles.inputLabel}>Chibi tạm thời</Text>
-              <View style={styles.emojiPicker}>
-                {PLANT_EMOJIS.map((emoji) => (
-                  <Pressable accessibilityRole="radio" accessibilityState={{ selected: emoji === plantEmoji }} key={emoji} onPress={() => setPlantEmoji(emoji)} style={[styles.emojiOption, emoji === plantEmoji && styles.emojiOptionSelected]}>
-                    <Text style={styles.emojiOptionText}>{emoji}</Text>
-                  </Pressable>
-                ))}
-              </View>
-              <Text style={styles.inputLabel}>Tên gọi</Text>
-              <TextInput maxLength={30} onChangeText={(value) => { setPlantName(value); setFormError(''); }} placeholder="Ví dụ: Mầm Nhỏ" placeholderTextColor={PALETTE.textMuted} style={styles.input} value={plantName} />
-              <Text style={styles.inputLabel}>Loại cây</Text>
-              <TextInput maxLength={40} onChangeText={(value) => { setPlantSpecies(value); setFormError(''); }} onSubmitEditing={submitPlant} placeholder="Ví dụ: Monstera" placeholderTextColor={PALETTE.textMuted} style={styles.input} value={plantSpecies} />
-              {formError ? <Text style={styles.formError}>{formError}</Text> : null}
-              <Text style={styles.formHint}>Ảnh thật, phân tích và chibi được lưu riêng sau lần check-in đầu tiên.</Text>
-            </ScrollView>
-            <View style={styles.formFooter}>
-              <Pressable onPress={submitPlant} style={styles.primaryButton}><Ionicons name="leaf" size={20} color={PALETTE.white} /><Text style={styles.primaryButtonText}>Tạo hồ sơ cây</Text></Pressable>
-            </View>
-          </KeyboardAvoidingView>
+          </ScrollView>
         </SafeAreaView>
       </Modal>
-
-      <Sheet visible={sheet === 'care'} title={`Chăm sóc ${activePlant?.name ?? ''}`} onClose={() => setSheet(null)}>
-        <ScrollView contentContainerStyle={styles.sheetContent} showsVerticalScrollIndicator={false}>
-          <View style={styles.careHero}>
-            <PlantAvatar chibi={activeChibi} label={activePlant?.name ?? 'cây'} />
-            <View style={styles.careHeroCopy}><Text style={styles.careHeroTitle}>{activePlant?.mood ?? 'Cây đang chờ ảnh'}</Text><Text style={styles.careHeroCaption}>Sức khỏe: {activePlant?.health ?? 'Chưa đánh giá'}</Text></View>
+      {notice ? (
+        <View style={styles.toastPlacement} pointerEvents="none">
+          <View
+            style={styles.toast}
+            accessible
+            accessibilityLabel={notice.message}
+            accessibilityLiveRegion="polite"
+            testID="garden-toast"
+          >
+            <Ionicons
+              name="checkmark-circle"
+              size={LAYOUT.smallIcon}
+              color={COLORS.success}
+              accessible={false}
+            />
+            <Text style={styles.toastText}>{notice.message}</Text>
           </View>
-          {(latestAnalysis?.actions ?? ['Chạm đất để kiểm tra độ ẩm trước khi tưới.', 'Lau nhẹ hai mặt lá mỗi tuần.', 'Xoay chậu một phần tư vòng để cây nhận sáng đều.']).map((tip, index) => (
-            <View key={`${tip}-${index}`} style={styles.careTip}><View style={styles.careTipIcon}><Text style={styles.careTipNumber}>{index + 1}</Text></View><Text style={styles.careTipText}>{tip}</Text></View>
-          ))}
-        </ScrollView>
-      </Sheet>
-
-      <Sheet visible={sheet === 'history'} title="Lịch sử check-in" onClose={() => setSheet(null)}>
-        <ScrollView contentContainerStyle={styles.sheetContent} showsVerticalScrollIndicator={false}>
-          {history.length === 0 ? (
-            <View style={styles.sheetEmpty}><Ionicons name="calendar-outline" size={34} color={PALETTE.textMuted} /><Text style={styles.sheetEmptyTitle}>Chưa có lần check-in nào</Text></View>
-          ) : history.map((entry, index) => {
-            const photo = state.plantPhotos.find((item) => item.id === entry.photoId);
-            const analysis = state.plantAnalyses.find((item) => item.id === entry.analysisId);
-            return (
-              <View key={entry.id} style={styles.historyRow}>
-                {photo?.imageUri ? <Image source={{ uri: photo.imageUri }} style={styles.historyThumb} /> : <View style={[styles.historyThumb, styles.historyFallback]}><PlantAvatar chibi={activeChibi} label={activePlant?.name ?? 'cây'} /></View>}
-                <View style={styles.historyCopy}><Text style={styles.historyTitle}>Check-in #{history.length - index}</Text><Text style={styles.historyAnalysis}>{analysis?.result.title ?? 'Chưa phân tích'}</Text><Text style={styles.historyDate}>{formatDate(entry.date)} · {entry.time}</Text></View>
-                <Ionicons name="checkmark-circle" size={22} color={PALETTE.primary} />
-              </View>
-            );
-          })}
-        </ScrollView>
-      </Sheet>
-
-      <Sheet visible={sheet === 'timelapse'} title="Time-lapse của cây" onClose={() => setSheet(null)}>
-        <ScrollView contentContainerStyle={styles.sheetContent} showsVerticalScrollIndicator={false}>
-          <Text style={styles.timelapseIntro}>Dải ảnh thật được lấy riêng từ từng lần check-in của cây.</Text>
-          {history.length === 0 ? <View style={styles.sheetEmpty}><Text style={styles.sheetEmptyTitle}>Chưa đủ ảnh để dựng time-lapse</Text></View> : (
-            <ScrollView contentContainerStyle={styles.timelineStrip} horizontal showsHorizontalScrollIndicator={false}>
-              {history.map((entry) => {
-                const photo = state.plantPhotos.find((item) => item.id === entry.photoId);
-                return <View key={entry.id} style={styles.timelineFrame}>{photo?.imageUri ? <Image source={{ uri: photo.imageUri }} style={styles.timelineImage} /> : <View style={[styles.timelineImage, styles.historyFallback]} />}<Text style={styles.timelineDate}>{formatDate(entry.date)}</Text></View>;
-              })}
-            </ScrollView>
-          )}
-        </ScrollView>
-      </Sheet>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  safeArea: { flex: 1, backgroundColor: PALETTE.background },
-  header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: SPACING.lg, paddingBottom: SPACING.md, paddingTop: SPACING.sm },
-  eyebrow: { color: PALETTE.primaryDark, fontSize: 11, fontWeight: '900', letterSpacing: 1.2 },
-  headerTitle: { color: PALETTE.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.6, marginTop: 3 },
-  iconButton: { alignItems: 'center', backgroundColor: PALETTE.surface, borderColor: PALETTE.border, borderRadius: 15, borderWidth: 1, height: 42, justifyContent: 'center', width: 42 },
-  pressed: { opacity: 0.72, transform: [{ scale: 0.985 }] },
-  content: { paddingBottom: 128 },
-  sectionHeadingRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: SPACING.lg, paddingTop: 4 },
-  sectionTitle: { color: PALETTE.text, fontSize: 19, fontWeight: '800' },
-  sectionCaption: { color: PALETTE.textMuted, fontSize: 12, marginTop: 3 },
-  addPlantButton: { alignItems: 'center', backgroundColor: PALETTE.primarySoft, borderRadius: 15, flexDirection: 'row', gap: 5, minHeight: 38, paddingHorizontal: 12 },
-  addPlantText: { color: PALETTE.primaryDark, fontSize: 12, fontWeight: '800' },
-  plantPage: { paddingHorizontal: SPACING.lg, paddingTop: 14 },
-  plantCard: { borderRadius: 28, minHeight: 365, overflow: 'hidden', padding: 20, ...SHADOWS.card },
-  plantCardTop: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between' },
-  plantName: { color: PALETTE.text, fontSize: 24, fontWeight: '900' },
-  plantSpecies: { color: PALETTE.textMuted, fontSize: 13, marginTop: 2 },
-  healthPill: { alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.72)', borderRadius: 14, flexDirection: 'row', gap: 5, paddingHorizontal: 10, paddingVertical: 7 },
-  healthPillText: { color: PALETTE.primaryDark, fontSize: 11, fontWeight: '800' },
-  plantVisual: { alignItems: 'center', flex: 1, justifyContent: 'center', minHeight: 210 },
-  plantEmojiWrap: { alignItems: 'center', height: 160, justifyContent: 'center', width: 190 },
-  plantGlow: { backgroundColor: 'rgba(255,255,255,0.65)', borderRadius: 70, height: 140, position: 'absolute', width: 140 },
-  plantEmoji: { fontSize: 106 },
-  plantChibiImage: { borderRadius: 42, height: 170, width: 170 },
-  chibiBadge: { alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.78)', borderRadius: 12, bottom: 7, flexDirection: 'row', gap: 4, paddingHorizontal: 8, paddingVertical: 5, position: 'absolute' },
-  chibiBadgeText: { color: PALETTE.primaryDark, fontSize: 9, fontWeight: '900', letterSpacing: 0.8 },
-  stageRow: { alignItems: 'flex-end', flexDirection: 'row', justifyContent: 'space-between' },
-  stageLabel: { color: PALETTE.textMuted, fontSize: 10, fontWeight: '700' },
-  stageValue: { color: PALETTE.text, fontSize: 15, fontWeight: '800', marginTop: 2 },
-  progressValue: { color: PALETTE.primaryDark, fontSize: 15, fontWeight: '900' },
-  progressTrack: { backgroundColor: 'rgba(255,255,255,0.72)', borderRadius: 7, height: 8, marginTop: 10, overflow: 'hidden' },
-  progressFill: { backgroundColor: PALETTE.primary, borderRadius: 7, height: '100%' },
-  paginationRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: SPACING.lg, paddingTop: 10 },
-  dots: { flexDirection: 'row', gap: 6 },
-  dot: { backgroundColor: PALETTE.border, borderRadius: 5, height: 7, width: 7 },
-  dotActive: { backgroundColor: PALETTE.primary, width: 22 },
-  counterText: { color: PALETTE.textMuted, fontSize: 11, fontWeight: '700' },
-  streakCard: { alignItems: 'center', backgroundColor: PALETTE.surface, borderColor: PALETTE.border, borderRadius: 20, borderWidth: 1, flexDirection: 'row', marginHorizontal: SPACING.lg, marginTop: 15, padding: 14 },
-  streakIcon: { alignItems: 'center', backgroundColor: '#FFF0DE', borderRadius: 15, height: 46, justifyContent: 'center', width: 46 },
-  streakCopy: { flex: 1, marginLeft: 12 },
-  streakTitle: { color: PALETTE.text, fontSize: 15, fontWeight: '800' },
-  streakCaption: { color: PALETTE.textMuted, fontSize: 11, marginTop: 3 },
-  dailyCard: { backgroundColor: PALETTE.surface, borderColor: PALETTE.border, borderRadius: 24, borderWidth: 1, marginHorizontal: SPACING.lg, marginTop: 14, padding: 17 },
-  dailyHeader: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between' },
-  dailyEyebrow: { color: PALETTE.primaryDark, fontSize: 10, fontWeight: '900', letterSpacing: 1 },
-  dailyTitle: { color: PALETTE.text, fontSize: 19, fontWeight: '800', marginTop: 4 },
-  dailyCaption: { color: PALETTE.textMuted, fontSize: 12, lineHeight: 18, marginTop: 9 },
-  statusBadge: { backgroundColor: '#FFF1D8', borderRadius: 12, paddingHorizontal: 9, paddingVertical: 6 },
-  statusBadgeDone: { backgroundColor: PALETTE.primarySoft },
-  statusBadgeText: { color: '#9A631C', fontSize: 9, fontWeight: '900' },
-  statusBadgeTextDone: { color: PALETTE.primaryDark },
-  cameraCta: { alignItems: 'center', backgroundColor: PALETTE.primaryDark, borderRadius: 18, flexDirection: 'row', marginTop: 14, minHeight: 66, padding: 11 },
-  cameraCtaIcon: { alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.13)', borderRadius: 15, height: 44, justifyContent: 'center', width: 44 },
-  cameraCtaCopy: { flex: 1, marginLeft: 11 },
-  cameraCtaTitle: { color: PALETTE.white, fontSize: 14, fontWeight: '800' },
-  cameraCtaCaption: { color: 'rgba(255,255,255,0.68)', fontSize: 10, marginTop: 3 },
-  quickActions: { flexDirection: 'row', gap: 10, marginHorizontal: SPACING.lg, marginTop: 14 },
-  quickAction: { alignItems: 'center', backgroundColor: PALETTE.surface, borderColor: PALETTE.border, borderRadius: 18, borderWidth: 1, flex: 1, padding: 12 },
-  quickIcon: { alignItems: 'center', backgroundColor: PALETTE.primarySoft, borderRadius: 13, height: 40, justifyContent: 'center', width: 40 },
-  quickLabel: { color: PALETTE.text, fontSize: 11, fontWeight: '800', marginTop: 7 },
-  arCard: { alignItems: 'center', borderRadius: 24, flexDirection: 'row', marginHorizontal: SPACING.lg, marginTop: 14, minHeight: 142, overflow: 'hidden', padding: 16 },
-  arIconWrap: { alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.10)', borderRadius: 18, height: 54, justifyContent: 'center', width: 54 },
-  arCopy: { flex: 1, marginHorizontal: 12 },
-  arEyebrow: { color: '#CDEFBF', fontSize: 9, fontWeight: '900', letterSpacing: 0.8 },
-  arTitle: { color: PALETTE.white, fontSize: 16, fontWeight: '800', marginTop: 4 },
-  arCaption: { color: 'rgba(255,255,255,0.65)', fontSize: 10, lineHeight: 15, marginTop: 4 },
-  arMuted: { color: PALETTE.textMuted },
-  arTitleMuted: { color: PALETTE.text },
-  arButton: { backgroundColor: '#CDEFBF', borderRadius: 14, paddingHorizontal: 13, paddingVertical: 10 },
-  arButtonDisabled: { backgroundColor: '#D6D9D2' },
-  arButtonText: { color: '#203A2F', fontSize: 11, fontWeight: '900' },
-  arButtonTextDisabled: { color: PALETTE.textMuted },
-  centerState: { alignItems: 'center', flex: 1, justifyContent: 'center', padding: 28 },
-  emptyIcon: { alignItems: 'center', backgroundColor: PALETTE.primarySoft, borderRadius: 30, height: 84, justifyContent: 'center', width: 84 },
-  emptyEmoji: { fontSize: 44 },
-  stateTitle: { color: PALETTE.text, fontSize: 20, fontWeight: '800', marginTop: 15 },
-  stateCaption: { color: PALETTE.textMuted, fontSize: 13, lineHeight: 19, marginBottom: 18, marginTop: 6, textAlign: 'center' },
-  primaryButton: { alignItems: 'center', alignSelf: 'stretch', backgroundColor: PALETTE.primaryDark, borderRadius: 17, flexDirection: 'row', gap: 8, justifyContent: 'center', minHeight: 52, paddingHorizontal: 20 },
-  primaryButtonText: { color: PALETTE.white, fontSize: 14, fontWeight: '800' },
-  fullModal: { backgroundColor: PALETTE.background, flex: 1 },
-  fullModalHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', padding: SPACING.lg },
-  fullModalTitle: { color: PALETTE.text, fontSize: 18, fontWeight: '800' },
-  headerSpacer: { height: 42, width: 42 },
-  formContent: { padding: SPACING.lg },
-  formHero: { alignItems: 'center', backgroundColor: PALETTE.primarySoft, borderRadius: 38, height: 150, justifyContent: 'center', marginBottom: 18 },
-  formEmoji: { fontSize: 82 },
-  inputLabel: { color: PALETTE.text, fontSize: 12, fontWeight: '800', marginBottom: 8, marginTop: 16 },
-  emojiPicker: { flexDirection: 'row', justifyContent: 'space-between' },
-  emojiOption: { alignItems: 'center', backgroundColor: PALETTE.surface, borderColor: PALETTE.border, borderRadius: 14, borderWidth: 1, height: 48, justifyContent: 'center', width: 48 },
-  emojiOptionSelected: { backgroundColor: PALETTE.primarySoft, borderColor: PALETTE.primary, borderWidth: 2 },
-  emojiOptionText: { fontSize: 25 },
-  input: { backgroundColor: PALETTE.surface, borderColor: PALETTE.border, borderRadius: RADIUS.md, borderWidth: 1, color: PALETTE.text, fontSize: 15, minHeight: 52, paddingHorizontal: 15 },
-  formError: { color: '#B94D4D', fontSize: 12, marginTop: 10 },
-  formHint: { color: PALETTE.textMuted, fontSize: 11, lineHeight: 17, marginTop: 16 },
-  formFooter: { borderTopColor: PALETTE.border, borderTopWidth: 1, padding: SPACING.lg },
-  modalBackdrop: { backgroundColor: 'rgba(20,28,23,0.48)', flex: 1, justifyContent: 'flex-end' },
-  sheet: { backgroundColor: PALETTE.background, borderTopLeftRadius: 28, borderTopRightRadius: 28, maxHeight: '78%', minHeight: 300 },
-  sheetHandle: { alignSelf: 'center', backgroundColor: '#C8CEC5', borderRadius: 3, height: 4, marginTop: 9, width: 38 },
-  sheetHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', padding: SPACING.lg },
-  sheetTitle: { color: PALETTE.text, flex: 1, fontSize: 19, fontWeight: '800' },
-  sheetContent: { paddingBottom: 36, paddingHorizontal: SPACING.lg },
-  careHero: { alignItems: 'center', backgroundColor: PALETTE.primarySoft, borderRadius: 20, flexDirection: 'row', marginBottom: 14, padding: 15 },
-  smallChibiWrap: { alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.5)', borderRadius: 16, height: 48, justifyContent: 'center', width: 48 },
-  smallChibiImage: { borderRadius: 16, height: 48, width: 48 },
-  smallChibiEmoji: { fontSize: 29 },
-  careHeroCopy: { flex: 1, marginLeft: 13 },
-  careHeroTitle: { color: PALETTE.text, fontSize: 15, fontWeight: '800' },
-  careHeroCaption: { color: PALETTE.textMuted, fontSize: 11, marginTop: 3 },
-  careTip: { alignItems: 'center', backgroundColor: PALETTE.surface, borderColor: PALETTE.border, borderRadius: 17, borderWidth: 1, flexDirection: 'row', marginBottom: 9, padding: 13 },
-  careTipIcon: { alignItems: 'center', backgroundColor: PALETTE.primarySoft, borderRadius: 12, height: 34, justifyContent: 'center', width: 34 },
-  careTipNumber: { color: PALETTE.primaryDark, fontSize: 12, fontWeight: '900' },
-  careTipText: { color: PALETTE.text, flex: 1, fontSize: 12, lineHeight: 18, marginLeft: 11 },
-  sheetEmpty: { alignItems: 'center', paddingHorizontal: 20, paddingVertical: 42 },
-  sheetEmptyTitle: { color: PALETTE.text, fontSize: 16, fontWeight: '800', marginTop: 10, textAlign: 'center' },
-  historyRow: { alignItems: 'center', backgroundColor: PALETTE.surface, borderColor: PALETTE.border, borderRadius: 18, borderWidth: 1, flexDirection: 'row', marginBottom: 10, padding: 10 },
-  historyThumb: { borderRadius: 14, height: 62, width: 62 },
-  historyFallback: { alignItems: 'center', backgroundColor: PALETTE.primarySoft, justifyContent: 'center' },
-  historyCopy: { flex: 1, marginHorizontal: 11 },
-  historyTitle: { color: PALETTE.text, fontSize: 13, fontWeight: '800' },
-  historyAnalysis: { color: PALETTE.primaryDark, fontSize: 11, fontWeight: '700', marginTop: 2 },
-  historyDate: { color: PALETTE.textMuted, fontSize: 10, marginTop: 3 },
-  timelapseIntro: { color: PALETTE.textMuted, fontSize: 12, lineHeight: 18, marginBottom: 14 },
-  timelineStrip: { gap: 10, paddingRight: 8 },
-  timelineFrame: { backgroundColor: PALETTE.surface, borderRadius: 16, padding: 8, width: 138 },
-  timelineImage: { backgroundColor: PALETTE.primarySoft, borderRadius: 12, height: 142, width: 122 },
-  timelineDate: { color: PALETTE.textMuted, fontSize: 10, marginTop: 7, textAlign: 'center' },
+  safe: { flex: 1, backgroundColor: COLORS.background, ...GRADIENTS.ambient },
+  flex: { flex: 1, minWidth: 0 },
+  loading: { flex: 1 },
+  header: {
+    width: "100%",
+    maxWidth: LAYOUT.contentMaxWidth,
+    alignSelf: "center",
+    paddingHorizontal: SPACING.page,
+    paddingTop: SPACING.sm,
+    paddingBottom: SPACING.compact,
+    gap: SPACING.sm,
+  },
+  brandRow: { flexDirection: "row", alignItems: "center", gap: SPACING.sm },
+  brand: { ...TYPE.overline, color: COLORS.primary, flexShrink: 1 },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: SPACING.compact,
+  },
+  title: { ...TYPE.title },
+  subtitle: { ...TYPE.subhead, marginTop: SPACING.xs },
+  add: {
+    width: LAYOUT.touch,
+    height: LAYOUT.touch,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.surfaceAlt,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pressed: { backgroundColor: COLORS.pressed },
+  scroll: { flexGrow: 1, paddingBottom: SPACING.sm },
+  carousel: { flexGrow: 0, flexShrink: 0 },
+  page: { paddingHorizontal: SPACING.page },
+  plant: {
+    gap: SPACING.sm,
+    width: "100%",
+    maxWidth: LAYOUT.contentMaxWidth - SPACING.page * 2,
+    alignSelf: "center",
+    borderRadius: RADIUS.xl,
+    borderCurve: "continuous",
+  },
+  plantPressed: { opacity: INTERACTION.pressedOpacity },
+  portrait: {
+    backgroundColor: COLORS.sage,
+    ...GRADIENTS.garden,
+    borderRadius: RADIUS.xl,
+    borderCurve: "continuous",
+    overflow: "hidden",
+  },
+  photoTop: {
+    position: "absolute",
+    top: SPACING.md,
+    left: SPACING.md,
+    right: SPACING.md,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: SPACING.sm,
+  },
+  phaseBadge: {
+    maxWidth: "72%",
+    backgroundColor: COLORS.imageBadge,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.xs,
+    borderRadius: RADIUS.pill,
+  },
+  phaseText: { ...TYPE.caption, fontWeight: "600", color: COLORS.primaryDark },
+  streakBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.xs,
+    backgroundColor: COLORS.imageBadge,
+    paddingHorizontal: SPACING.compact,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.pill,
+  },
+  streakText: { ...TYPE.caption, fontWeight: "700", color: COLORS.warning },
+  placeholder: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  placeholderCaption: { ...TYPE.caption, color: COLORS.primary },
+  plantDescription: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.sm,
+    flexWrap: "wrap",
+  },
+  metadata: { gap: SPACING.xs },
+  plantName: { ...TYPE.title, flexShrink: 1 },
+  species: { ...TYPE.subhead, marginTop: SPACING.xs },
+  statusRow: { flexDirection: "row", alignItems: "center", gap: SPACING.sm },
+  statusDot: {
+    width: SPACING.sm,
+    height: SPACING.sm,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.secondary,
+  },
+  statusDotDone: { backgroundColor: COLORS.primary },
+  status: { ...TYPE.caption, flexShrink: 1 },
+  section: {
+    width: "100%",
+    maxWidth: LAYOUT.contentMaxWidth,
+    alignSelf: "center",
+    paddingHorizontal: SPACING.page,
+    paddingTop: SPACING.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+  },
+  progress: { paddingBottom: SPACING.xs },
+  gardenActions: { flexDirection: "row", alignItems: "stretch", gap: SPACING.sm },
+  gardenActionsStack: { flexDirection: "column" },
+  careAction: { flex: 1, flexBasis: 0, paddingHorizontal: SPACING.compact },
+  claimAction: { paddingHorizontal: SPACING.compact },
+  sectionTitle: { ...TYPE.headline, flexShrink: 1 },
+  progressCount: {
+    ...TYPE.headline,
+    color: COLORS.primaryDark,
+    fontVariant: ["tabular-nums"],
+  },
+  progressTotal: { color: COLORS.textMuted, fontWeight: "400" },
+  track: {
+    height: SPACING.sm,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.border,
+    marginTop: SPACING.sm,
+    overflow: "hidden",
+  },
+  fill: {
+    height: "100%",
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.primary,
+  },
+  planningHint: { ...TYPE.subhead, paddingBottom: SPACING.sm },
+  empty: {
+    width: "100%",
+    maxWidth: LAYOUT.formMaxWidth,
+    alignSelf: "center",
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.xl,
+    alignItems: "center",
+    gap: SPACING.md,
+  },
+  emptyArt: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.surfaceAlt,
+    ...GRADIENTS.garden,
+    borderRadius: RADIUS.pill,
+    padding: SPACING.lg,
+  },
+  emptyTitle: {
+    ...TYPE.largeTitle,
+    textAlign: "center",
+    marginTop: SPACING.sm,
+  },
+  emptyDescription: {
+    ...TYPE.body,
+    color: COLORS.textMuted,
+    textAlign: "center",
+  },
+  emptyButton: { alignSelf: "stretch", marginTop: SPACING.sm },
+  archiveLink: {
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+    minHeight: LAYOUT.touch,
+    borderRadius: RADIUS.md,
+    borderCurve: "continuous",
+  },
+  archiveText: { ...TYPE.caption, flexShrink: 1 },
+  // The navigator's tab bar is in normal layout, so the scene already ends above it.
+  toastPlacement: {
+    position: "absolute",
+    left: SPACING.page,
+    right: SPACING.page,
+    bottom: SPACING.md,
+    alignItems: "center",
+  },
+  toast: {
+    maxWidth: LAYOUT.formMaxWidth,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.sm,
+    padding: SPACING.md,
+    borderRadius: RADIUS.lg,
+    borderCurve: "continuous",
+    backgroundColor: COLORS.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+    ...SHADOWS.floating,
+  },
+  toastText: { ...TYPE.subhead, color: COLORS.text, flexShrink: 1 },
+  sheetHeader: {
+    width: "100%",
+    maxWidth: LAYOUT.contentMaxWidth,
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.md,
+    padding: SPACING.page,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  done: {
+    minWidth: LAYOUT.touch,
+    minHeight: LAYOUT.touch,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: SPACING.compact,
+    borderRadius: RADIUS.md,
+    borderCurve: "continuous",
+  },
+  doneText: { ...TYPE.label, color: COLORS.primary },
+  archivedList: {
+    paddingHorizontal: SPACING.page,
+    paddingBottom: SPACING.xl,
+    width: "100%",
+    maxWidth: LAYOUT.contentMaxWidth,
+    alignSelf: "center",
+  },
+  archivedItem: {
+    paddingVertical: SPACING.lg,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  archivedHeading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.md,
+  },
+  archivedName: { ...TYPE.headline },
+  // Local illustration geometry, not a second reusable spacing/type scale.
+  sketchFrame: { width: 180, height: 180 },
+  sketchFrameCompact: { width: 120, height: 120 },
+  sketchCompact: {
+    position: "absolute",
+    left: -30,
+    top: -30,
+    transform: [{ scale: 2 / 3 }],
+  },
+  sketch: {
+    width: 180,
+    height: 180,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sketchHalo: {
+    position: "absolute",
+    width: 144,
+    height: 144,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.surfaceSoft,
+  },
+  sketchGround: {
+    position: "absolute",
+    bottom: 15,
+    width: 92,
+    height: 12,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.sageDeep,
+  },
+  sketchStem: {
+    position: "absolute",
+    top: 54,
+    left: 88,
+    width: 4,
+    height: 106,
+    backgroundColor: COLORS.botanical,
+    borderRadius: RADIUS.pill,
+  },
+  sketchLeafLeft: {
+    position: "absolute",
+    width: 58,
+    height: 36,
+    top: 91,
+    left: 34,
+    borderTopLeftRadius: 58,
+    borderBottomRightRadius: 58,
+    backgroundColor: COLORS.botanical,
+    transform: [{ rotate: "24deg" }],
+  },
+  sketchLeafRight: {
+    position: "absolute",
+    width: 62,
+    height: 39,
+    top: 65,
+    left: 89,
+    borderTopRightRadius: 62,
+    borderBottomLeftRadius: 62,
+    backgroundColor: COLORS.botanical,
+    transform: [{ rotate: "-18deg" }],
+  },
+  sketchLeafTop: {
+    position: "absolute",
+    width: 44,
+    height: 28,
+    top: 32,
+    left: 54,
+    borderTopLeftRadius: 44,
+    borderBottomRightRadius: 44,
+    backgroundColor: COLORS.sageDeep,
+    transform: [{ rotate: "48deg" }],
+  },
 });

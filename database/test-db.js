@@ -1,3 +1,7 @@
+/**
+ * Kiểm tra kết nối tới đúng database PAT và sự tồn tại của các bảng nền tảng; đóng kết nối sau khi kiểm tra.
+ */
+
 const { connectDB } = require("./db");
 
 async function test() {

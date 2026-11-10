@@ -1,3 +1,7 @@
+/**
+ * Tạo kết nối SQL Server từ cấu hình trên máy chủ bằng Windows Authentication; dùng chung cho các công cụ và kho dữ liệu của API.
+ */
+
 const path = require("path");
 
 require("dotenv").config({
@@ -7,9 +11,9 @@ require("dotenv").config({
 
 const sql = require("mssql/msnodesqlv8");
 
-async function connectDB() {
+async function connectDB({ database: databaseOverride } = {}) {
     const server = process.env.DB_SERVER?.trim();
-    const database = process.env.DB_NAME?.trim();
+    const database = databaseOverride?.trim() || process.env.DB_NAME?.trim();
     if (!server || !database) {
         throw new Error("Thiếu DB_SERVER hoặc DB_NAME trong .env");
     }
@@ -34,4 +38,4 @@ async function connectDB() {
     }
 }
 
-module.exports = { sql, connectDB };
+module.exports = { connectDB };

@@ -1,10 +1,7 @@
 /*
-    PAT required reference data
-    Prerequisite: run 01_pat_schema.sql first.
-
-    Run this in every environment. It contains only level rules and catalogs,
-    never demo accounts or user progress.
-*/
+ * Nạp danh mục và quy tắc cấp độ bắt buộc sau 01_pat_schema.sql cho mọi môi trường.
+ * Không tạo tài khoản mẫu hoặc tiến trình người dùng.
+ */
 
 USE [PAT];
 GO

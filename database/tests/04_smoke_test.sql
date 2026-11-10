@@ -1,11 +1,7 @@
 /*
-    PAT transactional smoke test
-    Prerequisites: run 01_pat_schema.sql and 02_reference_data.sql first.
-    The optional demo-account seed is not required.
-
-    Every test row is created inside one transaction and rolled back at the end.
-    A successful run returns ResultCode = SMOKE_TEST_OK and leaves no test data.
-*/
+ * Kiểm thử SQL nền tảng thủ công sau 01 và 02; không tự chạy khi khởi động ứng dụng.
+ * Dữ liệu kiểm thử nằm trong một giao dịch và được hoàn tác; thành công trả SMOKE_TEST_OK.
+ */
 
 USE [PAT];
 GO

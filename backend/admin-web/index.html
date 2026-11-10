@@ -1,0 +1,73 @@
+<!doctype html>
+<!-- Khung trang quản trị PAT: đăng nhập, soạn thư kèm quà, chọn người nhận, xem lịch sử và đổi mật khẩu. -->
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>PAT · Quản trị</title>
+  <link rel="stylesheet" href="/admin/admin.css">
+  <script src="/admin/admin.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Đến nội dung chính</a>
+  <div id="login-view" class="login-layout">
+    <section class="login-intro" aria-label="PAT quản trị">
+      <a href="/admin" class="brand login-brand" aria-label="PAT · Trang quản trị"><img class="brand-logo" src="/admin/assets/pat-logo.png" width="240" height="240" alt="PAT"></a>
+      <p class="eyebrow">GÓC NGƯỜI GIỮ VƯỜN</p>
+      <h1>Một lời nhắn.<br>Một niềm vui mới.</h1>
+      <p>Gửi những điều tốt lành đến hòm thư của người dùng.</p>
+      <div class="intro-note"><span class="status-dot" aria-hidden="true"></span>Không gian quản trị riêng</div>
+    </section>
+    <main class="login-panel">
+      <div class="login-card">
+        <p class="eyebrow">CHÀO MỪNG TRỞ LẠI</p>
+        <h2>Đăng nhập quản trị</h2>
+        <p class="muted">Dùng tài khoản quản trị trên máy chủ.</p>
+        <form id="login-form">
+          <label for="login-name">Tên quản trị</label>
+          <input id="login-name" name="username" autocomplete="username" required maxlength="80" pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,79}">
+          <label for="login-password">Mật khẩu</label>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="128">
+          <p id="login-error" class="error" role="alert"></p>
+          <button class="primary full" type="submit">Vào trang quản lý <span aria-hidden="true">→</span></button>
+        </form>
+      </div>
+    </main>
+  </div>
+  <div id="app-view" class="app-layout" hidden>
+    <aside class="sidebar">
+      <a href="/admin" class="brand sidebar-brand" aria-label="PAT · Trang quản trị"><img class="brand-logo" src="/admin/assets/pat-logo.png" width="120" height="120" alt="PAT"><small>Quản trị</small></a>
+      <nav aria-label="Quản trị"><button data-view="compose" aria-current="page"><span aria-hidden="true">↗</span> Gửi thư</button><button data-view="history"><span aria-hidden="true">≡</span> Lịch sử gửi</button><button data-view="security"><span aria-hidden="true">◇</span> Bảo mật</button></nav>
+      <div class="sidebar-bottom"><span id="admin-name"></span><button id="logout-button" class="quiet">Đăng xuất</button></div>
+    </aside>
+    <main id="main" class="workspace" tabindex="-1">
+      <header class="page-heading"><div><p class="eyebrow">QUẢN LÝ HÒM THƯ</p><h1 id="page-title">Gửi một điều tốt lành</h1></div><span class="private-label"><span class="status-dot" aria-hidden="true"></span>Truy cập riêng</span></header>
+      <p id="app-message" class="message" role="status" aria-live="polite" hidden></p>
+      <section id="compose-view" aria-label="Soạn thư">
+        <form id="compose-form" class="compose-grid">
+          <div class="stack">
+            <section class="panel"><div class="section-heading"><span class="step">01</span><h2>Nội dung thư</h2></div>
+              <label for="mail-title">Tiêu đề</label><input id="mail-title" required maxlength="120" placeholder="Một món quà dành cho bạn">
+              <label for="mail-body">Lời nhắn</label><textarea id="mail-body" required maxlength="4000" rows="7" placeholder="Viết lời nhắn gửi đến khu vườn…"></textarea><p class="field-hint">Chỉ gửi vào hòm thư trong ứng dụng.</p>
+            </section>
+            <section class="panel"><div class="section-heading"><span class="step">02</span><h2>Quà đính kèm</h2><span class="muted small">Không bắt buộc</span></div>
+              <div class="gift-field gold-field"><img class="gift-image" src="/admin/assets/gold-coin.png" width="52" height="52" alt=""><label for="gift-gold">Vàng</label><input id="gift-gold" type="number" inputmode="numeric" min="0" max="100000" step="1" value="0"></div>
+              <div id="food-fields" class="food-grid"></div>
+            </section>
+          </div>
+          <section class="panel recipient-panel"><div class="section-heading"><span class="step">03</span><h2>Người nhận</h2></div>
+            <fieldset class="audience"><legend class="sr-only">Phạm vi người nhận</legend><label><input type="radio" name="audience" value="users" checked> Chọn người dùng</label><label><input type="radio" name="audience" value="all"> Tất cả người dùng</label></fieldset>
+            <div id="user-picker"><label for="user-search">Tìm tên hoặc email</label><div class="search-row"><input id="user-search" type="search" maxlength="100" placeholder="Tìm người nhận"><button id="search-button" type="button" class="secondary">Tìm</button></div><p id="user-status" class="field-hint" role="status"></p><div id="users-list" class="users-list"></div><button id="more-users" type="button" class="quiet" hidden>Xem thêm</button></div>
+            <p id="all-users-note" class="audience-note" hidden>Thư sẽ được gửi đến tất cả tài khoản đang hoạt động tại thời điểm gửi.</p>
+            <div class="send-summary"><span id="selected-count">Chưa chọn người nhận</span><button class="primary full" type="submit">Xem lại và gửi <span aria-hidden="true">→</span></button></div>
+          </section>
+        </form>
+      </section>
+      <section id="history-view" class="panel" aria-label="Lịch sử gửi" hidden><div class="section-heading"><h2>Những lá thư đã gửi</h2><button id="refresh-history" class="secondary">Làm mới</button></div><p class="field-hint">50 lần gửi gần nhất.</p><div id="history-list" class="history-list"></div></section>
+      <section id="security-view" class="panel security-panel" aria-label="Bảo mật" hidden><h2>Đổi mật khẩu quản trị</h2><p class="muted">Đổi mật khẩu sẽ đăng xuất tất cả phiên quản trị.</p><form id="password-form"><label for="current-password">Mật khẩu hiện tại</label><input id="current-password" type="password" autocomplete="current-password" required maxlength="128"><label for="new-password">Mật khẩu mới</label><input id="new-password" type="password" autocomplete="new-password" required minlength="12" maxlength="128" aria-describedby="password-hint"><p id="password-hint" class="field-hint">Từ 12 đến 128 ký tự. Có thể dùng trình quản lý mật khẩu.</p><label for="repeat-password">Nhập lại mật khẩu mới</label><input id="repeat-password" type="password" autocomplete="new-password" required minlength="12" maxlength="128"><button class="primary" type="submit">Đổi mật khẩu</button></form></section>
+    </main>
+  </div>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-heading"><h2 id="confirm-title">Kiểm tra trước khi gửi</h2><button id="close-confirm" class="icon-button" aria-label="Đóng">×</button></div><p id="confirm-audience" class="muted"></p><div class="mail-preview"><h3 id="confirm-mail-title"></h3><p id="confirm-mail-body"></p><ul id="confirm-gifts"></ul></div><p class="field-hint">Thư đã gửi không thể thu hồi. Mỗi tài khoản chỉ nhận quà một lần.</p><div class="dialog-actions"><button id="cancel-confirm" class="secondary">Quay lại sửa</button><button id="send-button" class="primary">Xác nhận gửi</button></div></dialog>
+</body>
+</html>

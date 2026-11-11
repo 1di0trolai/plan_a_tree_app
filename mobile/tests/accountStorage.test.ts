@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createInitialState } from '../src/data/seed';
 import { accountStorage, loadAccountData } from '../src/store/accountStorage';
+import { syncLoginVisit } from '../src/store/loginMailbox';
 import { FRESH_START_EPOCH, STORAGE_KEY, type StoredUserData, type UserStorage } from '../src/store/storageLifecycle';
 const a = { id: '11111111-1111-4111-8111-111111111111', email: 'a@example.com', username: 'Người trồng cây' };
 const b = { ...a, id: '22222222-2222-4222-8222-222222222222', email: 'b@example.com' };
@@ -44,4 +45,23 @@ test('account hydration preserves the durable cloud outbox and never resets its 
   const reopened = await loadAccountData(f.port, a, f.legacy);
   assert.deepEqual(reopened.record.cloudSync, marker);
   assert.equal(reopened.record.state.economy.gold, 123);
+});
+
+test('switching accounts preserves separate attendance receipts and mailbox read flags', async () => {
+  const f = fixture();
+  const first = await loadAccountData(f.port, a, f.legacy);
+  first.record.state = syncLoginVisit(first.record.state, new Date('2026-11-11T03:00:00Z'), () => 0).state;
+  first.record.state.mailbox = [{ id: 'first-unread', source: 'publisher', sourceRef: 'publication-one',
+    title: 'A letter', body: '', createdAt: '2026-11-11T03:00:00Z', readAt: null, claimedAt: null, attachments: [] }];
+  await first.port.setItem(STORAGE_KEY, JSON.stringify(first.record));
+  const other = await loadAccountData(f.port, b, f.legacy);
+  assert.deepEqual(other.record.state.economy.loginVisits, []);
+  assert.deepEqual(other.record.state.mailbox, []);
+  other.record.state.mailbox = [{ ...first.record.state.mailbox[0], id: 'second-read', readAt: '2026-11-11T04:00:00Z' }];
+  await other.port.setItem(STORAGE_KEY, JSON.stringify(other.record));
+  const reopened = await loadAccountData(f.port, a, f.legacy);
+  assert.equal(reopened.record.state.economy.loginVisits.length, 1);
+  assert.equal(reopened.record.state.mailbox[0]?.id, 'first-unread');
+  assert.equal(reopened.record.state.mailbox[0]?.readAt, null);
+  assert.equal((await loadAccountData(f.port, b, f.legacy)).record.state.mailbox[0]?.readAt, '2026-11-11T04:00:00Z');
 });

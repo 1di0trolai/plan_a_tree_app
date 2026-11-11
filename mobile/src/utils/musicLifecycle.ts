@@ -26,49 +26,65 @@ export function advanceMusicLifecycle(
 interface MusicPlayer {
   readonly playing: boolean;
   readonly isBuffering: boolean;
+  readonly isLoaded?: boolean;
   play(): void;
   pause(): void;
 }
 
-/** One foreground/route session, with at most two retries after native interruption. */
+/** One cancellable session; configure audio before loading and retry a failed native load at most twice. */
 export function startMusicPlaybackSession({
   player,
   configure,
   activate,
+  prepare,
   onError,
 }: {
   player: MusicPlayer;
   configure: () => Promise<void>;
   activate: () => Promise<void>;
-  onError: () => void;
+  prepare?: () => void;
+  onError: (reason: "load" | "play") => void;
 }) {
   let current = true;
   let starting = false;
   let attempts = 0;
   let reported = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timerDelay: number | undefined;
+  const loaded = () => player.isLoaded !== false;
   const clearRetry = () => {
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
+    timerDelay = undefined;
   };
-  const recover = () => {
-    if (!current || starting || timer !== undefined || player.playing || player.isBuffering)
-      return;
-    if (attempts >= 3) {
-      if (!reported) {
-        reported = true;
-        onError();
-      }
+  const recover = (failed = false) => {
+    if (!current || starting || reported) return;
+    if (!failed && loaded() && !player.isBuffering && player.playing) {
+      clearRetry();
       return;
     }
-    // Camera teardown and iOS audio-session deactivation may finish AFTER the
-    // route changes. Verify actual native playback instead of trusting play().
+    // Loading is asynchronous. Do not call it broken just because play() has
+    // queued playback; also do not wait forever on a failed/stuck native source.
+    const loading = !loaded() || player.isBuffering;
+    const delay = loading && !failed ? 15000 : 750;
+    if (timer !== undefined && timerDelay === delay) return;
+    clearRetry();
+    timerDelay = delay;
     timer = setTimeout(() => {
       timer = undefined;
-      if (current && !player.playing && !player.isBuffering) void start();
-    }, 750);
+      timerDelay = undefined;
+      if (!current || (loaded() && !player.isBuffering && player.playing)) return;
+      if (attempts >= 3) {
+        if (!reported) {
+          reported = true;
+          onError(loaded() ? "play" : "load");
+        }
+      } else {
+        void start(failed || !loaded() || player.isBuffering);
+      }
+    }, delay);
   };
-  const start = async () => {
+  const start = async (reload = false) => {
     if (!current || starting) return;
     starting = true;
     attempts += 1;
@@ -76,7 +92,11 @@ export function startMusicPlaybackSession({
       await configure();
       if (!current) return;
       await activate();
-      if (current) player.play();
+      if (!current) return;
+      if (reload || !loaded()) prepare?.();
+      // Expo queues play() while the source buffers. Waiting for isLoaded before
+      // configuring the session created a dead end after a mute/reload failure.
+      player.play();
     } catch {
       // A transient audio-session error must NOT persist the user's switch off.
       // Recovery below reports only after the bounded attempts are exhausted.
@@ -87,11 +107,7 @@ export function startMusicPlaybackSession({
   };
   void start();
   return {
-    observe: () => {
-      if (!current) return;
-      if (player.playing || player.isBuffering) clearRetry();
-      else recover();
-    },
+    observe: (failed = false) => recover(failed),
     stop: () => {
       current = false;
       clearRetry();

@@ -1,5 +1,13 @@
 /** Chứa bản dịch Anh và Nhật cho kết quả thao tác và lỗi do ứng dụng tạo; không dùng để viết lại nội dung người dùng đã lưu. */
 export const actionMessages: Record<string, readonly [string, string]> = {
+  'Chưa phát được nhạc nền. Hãy thử bật nhạc lại.': ["Couldn't play background music. Try turning it on again.", 'BGMを再生できませんでした。もう一度オンにしてください。'],
+  'Thiết bị chưa phát được nhạc nền. Hãy thử bật nhạc lại.': ["Your device couldn't play background music. Try turning it on again.", '端末でBGMを再生できませんでした。もう一度オンにしてください。'],
+  'Chưa tải được nhạc nền. Hãy thử bật nhạc lại.': ["Couldn't load background music. Try turning it on again.", 'BGMを読み込めませんでした。もう一度オンにしてください。'],
+  'Chưa cập nhật được nhắc thăm vườn. Hãy thử lại; nếu đã tắt nhắc, bạn có thể tắt thông báo PAT trong cài đặt thiết bị.': ["Couldn't update garden reminders. Retry; if you have turned reminders off, you can also disable PAT notifications in your device settings.", '庭のリマインダーを更新できませんでした。再試行してください。リマインダーをオフにした場合は、端末の設定でPATの通知を無効にすることもできます。'],
+  'Chưa tìm thấy hồ sơ phù hợp trong vườn.': ['No matching plant profile was found in your garden.', '庭で一致する植物のプロフィールが見つかりませんでした。'],
+  'Chưa có kết quả phân tích hợp lệ. Hãy thêm ảnh rõ nét để kiểm tra cây.': ['No valid analysis is available yet. Add a clear photo to check your plant.', '有効な分析結果がまだありません。植物をチェックするには鮮明な写真を追加してください。'],
+  'Không tìm thấy loài thú nuôi.': ['Pet species not found.', 'ペットの種類が見つかりません。'],
+  'Hãy chọn các thú nuôi khác nhau để bán.': ['Select different pets to sell.', '売却するペットは重複しないように選んでください。'],
   'Đang lớn': ['Growing', '成長中'],
   'Chưa đánh giá': ['Not assessed yet', '未評価'],
   'Hành trình mới': ['New growing journey', '新しい栽培の記録'],

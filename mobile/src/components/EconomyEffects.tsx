@@ -14,7 +14,9 @@ import { useApp } from "@/store/AppStore";
 import { COLORS, LAYOUT, RADIUS, SHADOWS, SPACING, TYPE } from "@/theme";
 import type { LoginRewardClaim } from "@/types/app";
 
-type RewardSession = { ready: boolean; loggedIn: boolean; identity: string };
+type RewardSession = { ready: boolean; loggedIn: boolean; identity: string; userId?: string };
+type VisitRequest = { session: RewardSession; date: string; promise: Promise<unknown>;
+  failed?: boolean; retryable?: boolean; readyToRetry?: boolean };
 type RewardAttempt = { session: RewardSession; giftId: string } & (
   | { kind: "pending" }
   | { kind: "reward"; claim: LoginRewardClaim }
@@ -29,8 +31,8 @@ export function EconomyEffects() {
     retryRewardAction, pendingPetTransaction, pendingFoodPurchase } = useApp();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
-  const { loggedIn, identity } = state.auth;
-  const session = useMemo(() => ({ ready, loggedIn, identity }), [ready, loggedIn, identity]);
+  const { loggedIn, identity, userId } = state.auth;
+  const session = useMemo(() => ({ ready, loggedIn, identity, userId }), [ready, loggedIn, identity, userId]);
   const liveSession = useRef<RewardSession | null>(session);
   const [clock, refreshClock] = useState(0);
   const date = localDateKey();
@@ -38,14 +40,22 @@ export function EconomyEffects() {
   const [opened, setOpened] = useState<RewardSession | null>(null);
   const [attempt, setAttempt] = useState<RewardAttempt | null>(null);
   const pending = useRef<RewardSession | null>(null);
-  const synced = useRef<{ session: RewardSession; date: string; promise: Promise<unknown> } | null>(null);
+  const synced = useRef<VisitRequest | null>(null);
+  const visitRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visitFailures = useRef(0);
+  const recordedToday = state.economy.loginVisits.some((visit) => visit.date === date);
   const [syncError, setSyncError] = useState<{ session: RewardSession; message: string } | null>(null);
   const [mailNotice, setMailNotice] = useState<{ session: RewardSession; id: string } | null>(null);
   const knownMail = useRef<{ session: RewardSession; ids: Set<string> } | null>(null);
 
   useEffect(() => {
     liveSession.current = session;
-    return () => { if (liveSession.current === session) liveSession.current = null; };
+    visitFailures.current = 0;
+    return () => {
+      if (liveSession.current === session) liveSession.current = null;
+      if (visitRetry.current !== null) { clearTimeout(visitRetry.current); visitRetry.current = null; }
+      if (synced.current?.session === session && synced.current.failed) synced.current.readyToRetry = true;
+    };
   }, [session]);
   useEffect(() => {
     if (!ready || !loggedIn) return;
@@ -59,18 +69,46 @@ export function EconomyEffects() {
   }, [ready, loggedIn, identity]);
 
   useEffect(() => {
-    if (!ready || !loggedIn || !foreground || pendingPetTransaction || pendingFoodPurchase || pendingRewardAction
-      || (synced.current?.session === session && synced.current.date === date)) return;
-    const request = { session, date, promise: Promise.resolve().then(syncLoginVisit) };
+    const previous = synced.current?.session === session && synced.current.date === date ? synced.current : null;
+    if (!ready || !loggedIn || !foreground || pendingPetTransaction || pendingFoodPurchase
+      || (pendingRewardAction && !(previous?.failed && previous.retryable))
+      || (previous && !previous.readyToRetry) || (recordedToday && !previous?.failed)) return;
+    // An attempted visit is not a recorded visit. Retry a temporary initialization
+    // failure, or finish the same durable receipt after a failed SQLite write.
+    // No new random roll or absent calendar day is introduced by a retry.
+    const request: VisitRequest = { session, date, promise: Promise.resolve().then(async () => {
+      if (pendingRewardAction) {
+        const recovered = await retryRewardAction();
+        if (!recovered.ok || liveSession.current !== session) return recovered;
+      }
+      return syncLoginVisit();
+    }) };
     synced.current = request;
+    const failed = (message: string, retryable: boolean) => {
+      if (liveSession.current !== session || synced.current !== request) return;
+      request.failed = true; request.retryable = retryable;
+      setSyncError({ session, message });
+      const delays = [3_000, 10_000, 30_000];
+      const delay = delays[Math.min(visitFailures.current++, delays.length - 1)];
+      if (visitRetry.current !== null) clearTimeout(visitRetry.current);
+      visitRetry.current = setTimeout(() => {
+        visitRetry.current = null;
+        if (liveSession.current !== session || synced.current !== request) return;
+        request.readyToRetry = true;
+        refreshClock((value) => value + 1);
+      }, delay);
+    };
     request.promise.then((value) => {
-      if (liveSession.current !== session) return;
+      if (liveSession.current !== session || synced.current !== request) return;
       const result = value as Awaited<ReturnType<typeof syncLoginVisit>>;
-      setSyncError(result.ok ? null : { session, message: result.message });
+      if (!result.ok) { failed(result.message, result.retryable === true); return; }
+      if (synced.current === request) synced.current = null;
+      visitFailures.current = 0;
+      setSyncError(null);
     }).catch(() => {
-      if (liveSession.current === session) setSyncError({ session, message: "Chưa lưu được lượt ghé vườn. Chạm hộp quà để thử lại." });
+      failed("Chưa lưu được lượt ghé vườn. Chạm hộp quà để thử lại.", false);
     });
-  }, [ready, loggedIn, foreground, session, date, clock, syncLoginVisit, pendingPetTransaction, pendingFoodPurchase, pendingRewardAction]);
+  }, [ready, loggedIn, foreground, session, date, clock, recordedToday, syncLoginVisit, retryRewardAction, pendingPetTransaction, pendingFoodPurchase, pendingRewardAction]);
 
   useEffect(() => {
     if (knownMail.current?.session !== session) { knownMail.current = { session, ids: new Set(state.mailbox.map((mail) => mail.id)) }; return; }

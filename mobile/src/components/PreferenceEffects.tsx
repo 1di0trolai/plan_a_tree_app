@@ -117,11 +117,10 @@ export function PreferenceEffects() {
     updateSetting,
   ]);
 
-  const musicEnabled =
+  const musicAvailable =
     ready &&
     !effectsSuspended &&
     loggedIn &&
-    state.settings.music &&
     state.settings.musicConsent;
   const playing = shouldPlayBackgroundMusic(
     state.settings,
@@ -133,8 +132,10 @@ export function PreferenceEffects() {
     setPreferenceError("music", message);
   }, []);
   // Keep one player through tab changes, camera pauses and temporary system sheets.
-  // A new foreground visit remounts it at 0. Logout, mute and reset release it.
-  return musicEnabled ? (
+  // Muting only pauses the loaded player; avoid native teardown/reload racing
+  // the next switch on slower Android devices.
+  // A new foreground visit starts at 0; logout/reset still release the player.
+  return musicAvailable ? (
     <MusicPlayback key={visit.entry} playing={playing} route={pathname} onError={failMusic} />
   ) : null;
 }
@@ -148,7 +149,7 @@ function MusicPlayback({
   route: string;
   onError: (message: string) => void;
 }) {
-  const player = useAudioPlayer(BACKGROUND_MUSIC_SOURCE, {
+  const player = useAudioPlayer(null, {
     updateInterval: 1000,
   });
   const status = useAudioPlayerStatus(player);
@@ -156,7 +157,6 @@ function MusicPlayback({
 
   // eslint-disable-next-line react-hooks/immutability -- Expo AudioPlayer exposes imperative native setters, not React state.
   useEffect(() => {
-    if (!status.isLoaded) return;
     try {
       // AudioPlayer properties are documented native setters, not React state.
       /* eslint-disable react-hooks/immutability */
@@ -182,7 +182,10 @@ function MusicPlayback({
           interruptionMode: "doNotMix",
         }),
         activate: () => setIsAudioActiveAsync(true),
-        onError: () => onError("Chưa phát được nhạc nền. Hãy thử bật nhạc lại."),
+        prepare: () => player.replace(BACKGROUND_MUSIC_SOURCE),
+        onError: (reason) => onError(reason === "load"
+          ? "Chưa tải được nhạc nền. Hãy thử bật nhạc lại."
+          : "Chưa phát được nhạc nền. Hãy thử bật nhạc lại."),
       });
       session.current = next;
       return () => {
@@ -192,25 +195,12 @@ function MusicPlayback({
     } catch {
       onError("Thiết bị chưa phát được nhạc nền. Hãy thử bật nhạc lại.");
     }
-  }, [status.isLoaded, playing, route, player, onError]);
+  }, [playing, route, player, onError]);
 
   useEffect(() => {
-    session.current?.observe();
+    session.current?.observe(Boolean(status.error));
     if (status.playing) setPreferenceError("music", null);
-  }, [status.playing, status.isBuffering, status.error]);
-
-  useEffect(() => {
-    if (status.error) onError("Chưa phát được nhạc nền. Hãy thử bật nhạc lại.");
-  }, [status.error, onError]);
-
-  useEffect(() => {
-    if (status.isLoaded) return;
-    const timeout = setTimeout(
-      () => onError("Chưa tải được nhạc nền. Hãy thử bật nhạc lại."),
-      15000,
-    );
-    return () => clearTimeout(timeout);
-  }, [status.isLoaded, onError]);
+  }, [status.playing, status.isLoaded, status.isBuffering, status.error]);
 
   return null;
 }

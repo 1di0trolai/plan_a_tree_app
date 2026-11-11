@@ -17,13 +17,19 @@ const compiled = ts.transpileModule(
 ).outputText;
 type Node = { type: (props: Record<string, unknown>) => null; props: Record<string, unknown>; key?: number };
 type Hook = { value?: unknown; deps?: unknown[]; effect?: () => void | (() => void); cleanup?: () => void };
-type Scope = { hooks: Hook[]; cursor: number; effects: number[] };
+type Scope = { hooks: Hook[]; cursor: number; effects: number[]; nativePlayer?: MockPlayer };
+type MockPlayer = {
+  playing: boolean; isLoaded: boolean; isBuffering: boolean; error: string | null;
+  loop: boolean; volume: number; currentTime: number; plays: number; pauses: number;
+  loads: number; playRequested: boolean; released: boolean;
+  play(): void; pause(): void; replace(source: number): void;
+};
 const makeScope = (): Scope => ({ hooks: [], cursor: 0, effects: [] });
 const flush = async () => { for (let turn = 0; turn < 12; turn++) await Promise.resolve(); };
 const same = (left?: unknown[], right?: unknown[]) => !!left && !!right && left.length === right.length && left.every((value, index) => Object.is(value, right[index]));
 
 /** Real coordinator and nested MusicPlayback, with only native audio/hooks mocked. */
-function musicFlow(options: { muted?: boolean; delayedMode?: Promise<void>; ringer?: "normal" | "silent" | "vibrate" } = {}) {
+function musicFlow(options: { muted?: boolean; delayedMode?: Promise<void>; ringer?: "normal" | "silent" | "vibrate"; manualLoad?: boolean } = {}) {
   const state = createInitialState();
   state.auth.loggedIn = true;
   state.settings.music = !options.muted;
@@ -44,9 +50,15 @@ function musicFlow(options: { muted?: boolean; delayedMode?: Promise<void>; ring
   let child: Scope | null = null;
   let childKey: number | undefined;
   let scope = parent;
-  const players: { playing: boolean; isLoaded: boolean; isBuffering: boolean; error: string | null; loop: boolean; volume: number; currentTime: number; plays: number; pauses: number; play(): void; pause(): void }[] = [];
+  const players: MockPlayer[] = [];
   const player = () => players.at(-1)!;
-  const cleanup = (target: Scope) => { for (const hook of target.hooks) hook.cleanup?.(); };
+  const cleanup = (target: Scope) => {
+    for (const hook of target.hooks) hook.cleanup?.();
+    if (target.nativePlayer) {
+      target.nativePlayer.pause();
+      target.nativePlayer.released = true;
+    }
+  };
   const effects = (target: Scope) => {
     for (const index of target.effects.splice(0)) {
       const hook = target.hooks[index];
@@ -92,7 +104,7 @@ function musicFlow(options: { muted?: boolean; delayedMode?: Promise<void>; ring
           },
         } };
         case "expo-audio": return {
-          useAudioPlayer: () => player(),
+          useAudioPlayer: (source: null) => { assert.equal(source, null); return player(); },
           useAudioPlayerStatus: () => ({ ...player() }),
           setAudioModeAsync: async (mode: { allowsRecording: boolean; shouldPlayInBackground: boolean; playsInSilentMode: boolean }) => {
             modeCalls++;
@@ -129,14 +141,24 @@ function musicFlow(options: { muted?: boolean; delayedMode?: Promise<void>; ring
     if (!child || childKey !== node.key) {
       if (child) cleanup(child);
       child = makeScope(); childKey = node.key;
-      players.push({ playing: false, isLoaded: true, isBuffering: false, error: null, loop: false, volume: 1, currentTime: 0, plays: 0, pauses: 0,
+      const next: MockPlayer = { playing: false, isLoaded: false, isBuffering: false, error: null, loop: false, volume: 1, currentTime: 0, plays: 0, pauses: 0, loads: 0, playRequested: false, released: false,
         play() {
           this.plays++;
+          this.playRequested = true;
           // SDK 58 Android checks the ringer mode independently of media volume.
-          if (!blocked && (playsInSilentMode || !options.ringer || options.ringer === "normal")) this.playing = true;
+          if (this.isLoaded && !blocked && (playsInSilentMode || !options.ringer || options.ringer === "normal")) this.playing = true;
         },
-        pause() { this.pauses++; this.playing = false; },
-      });
+        pause() { this.pauses++; this.playing = false; this.playRequested = false; },
+        replace(source) {
+          assert.equal(source, 1);
+          assert.equal(activeCalls > 0, true, "activate audio before loading the bundled source");
+          this.loads++; this.currentTime = 0; this.error = null;
+          this.isLoaded = !options.manualLoad;
+          this.isBuffering = !!options.manualLoad;
+        },
+      };
+      child.nativePlayer = next;
+      players.push(next);
     }
     scope = child; child.cursor = 0; node.type(node.props); effects(child);
   };
@@ -146,6 +168,14 @@ function musicFlow(options: { muted?: boolean; delayedMode?: Promise<void>; ring
     path: (next: string) => { path = next; render(); },
     event: (next: string) => { foreground = next; for (const listener of listeners) listener(next); render(); },
     mute: () => { state.settings.music = false; render(); },
+    unmute: () => { state.settings.music = true; render(); },
+    finishLoad: (index = players.length - 1) => {
+      const loaded = players[index];
+      loaded.isLoaded = true; loaded.isBuffering = false; loaded.error = null;
+      if (loaded.playRequested && !loaded.released && !blocked) loaded.playing = true;
+      render();
+    },
+    failLoad: () => { player().isLoaded = false; player().isBuffering = false; player().playing = false; player().error = "Native load failure"; render(); },
     suspend: () => { suspended = true; render(); },
     unready: () => { ready = false; render(); },
     failModes: (count: number) => { modeFailures = count; },
@@ -196,7 +226,8 @@ test("enabled music plays in Android silent/vibrate mode without false playback 
 
     const muted = musicFlow({ muted: true, ringer });
     await flush();
-    assert.equal(muted.players.length, 0);
+    assert.equal(muted.players.length, 1);
+    assert.equal(muted.player().loads, 0);
     assert.equal(muted.modeCalls, 0);
     muted.unmount();
   }
@@ -247,7 +278,7 @@ test("inactive resumes the same player; actual background starts a fresh looping
 test("mute, logout, reset suspension and hydration cancel delayed resumes; muted app never starts audio", async (context) => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
   const muted = musicFlow({ muted: true }); await flush();
-  assert.equal(muted.players.length, 0); assert.equal(muted.modeCalls, 0); muted.unmount();
+  assert.equal(muted.players.length, 1); assert.equal(muted.player().loads, 0); assert.equal(muted.modeCalls, 0); muted.unmount();
   for (const action of ["mute", "logout", "suspend", "unready", "camera", "unmount"] as const) {
     let resolve!: () => void;
     const wait = new Promise<void>((done) => { resolve = done; });
@@ -261,4 +292,73 @@ test("mute, logout, reset suspension and hydration cancel delayed resumes; muted
     assert.deepEqual(flow.writes, []);
     flow.unmount();
   }
+});
+
+test("switching music off/on pauses and resumes one loaded player without a new native load", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const flow = musicFlow(); await flush(); flow.render();
+  flow.player().currentTime = 42;
+  for (let index = 0; index < 4; index++) {
+    flow.mute(); assert.equal(flow.player().playing, false);
+    flow.unmute(); await flush(); flow.render();
+    assert.equal(flow.player().playing, true);
+    assert.equal(flow.player().currentTime, 42);
+  }
+  context.mock.timers.tick(16000); await flush(); flow.render();
+  assert.equal(flow.players.length, 1);
+  assert.equal(flow.player().loads, 1);
+  assert.equal(flow.errors.some(Boolean), false);
+  flow.unmount();
+});
+
+test("rapid toggles cancel stale configure work before loading or starting music", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  let resolve!: () => void;
+  const wait = new Promise<void>((done) => { resolve = done; });
+  const flow = musicFlow({ delayedMode: wait });
+  flow.mute(); flow.unmute(); flow.mute(); flow.unmute();
+  resolve(); await flush(); flow.render();
+  assert.equal(flow.players.length, 1);
+  assert.equal(flow.player().loads, 1);
+  assert.equal(flow.player().plays, 1);
+  assert.equal(flow.activeCalls, 1);
+  assert.equal(flow.player().playing, true);
+  assert.equal(flow.errors.some(Boolean), false);
+  flow.unmount();
+});
+
+test("an in-flight native load cannot start music or report a timeout after mute/logout", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const action of ["mute", "logout"] as const) {
+    const flow = musicFlow({ manualLoad: true }); await flush(); flow.render();
+    assert.equal(flow.player().loads, 1);
+    if (action === "mute") flow.mute();
+    else { flow.state.auth.loggedIn = false; flow.render(); }
+    flow.finishLoad(0);
+    context.mock.timers.tick(60000); await flush();
+    assert.equal(flow.players[0].playing, false, action);
+    assert.equal(flow.errors.some(Boolean), false, action);
+    flow.unmount();
+  }
+});
+
+test("failed and stuck source loads retry a bounded number of times, then an off/on action can retry", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const flow = musicFlow({ manualLoad: true }); await flush(); flow.render();
+  flow.failLoad();
+  context.mock.timers.tick(750); await flush(); flow.render();
+  assert.equal(flow.player().loads, 2);
+  for (let index = 0; index < 3; index++) {
+    context.mock.timers.tick(15000); await flush(); flow.render();
+  }
+  assert.equal(flow.player().loads, 3);
+  assert.equal(flow.errors.filter(Boolean).length, 1);
+  assert.equal(flow.state.settings.music, true);
+  flow.mute(); flow.unmute(); await flush(); flow.render();
+  assert.equal(flow.player().loads, 4, "a manual retry reloads a previously stalled source immediately");
+  flow.finishLoad(); await flush();
+  assert.equal(flow.player().playing, true);
+  assert.equal(flow.errors.at(-1), null);
+  assert.deepEqual(flow.writes, []);
+  flow.unmount();
 });

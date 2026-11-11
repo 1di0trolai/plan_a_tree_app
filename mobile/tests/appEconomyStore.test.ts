@@ -50,7 +50,9 @@ function provider(prepare?: (state: AppState) => void) {
     socialAttempts: [] as string[], socialResets: [] as string[], failSocialReset: false,
     cloudMail: [] as { claimIds?: string[]; readIds?: string[]; deleteIds?: string[] }[],
     cloudFailure: null as SyncStatus | null, cloudFlushes: 0, cloudRefreshes: 0,
-    cloudSaves: [] as AppState[] };
+    cloudSaves: [] as AppState[], cloudIncoming: null as AppState | null };
+  let nativeState = 'active';
+  const foregroundListeners = new Set<(status: string) => void>();
   let timerSequence = 0;
   const timers = new Map<number, { delay: number; run: () => void }>();
   const clock = {
@@ -106,7 +108,9 @@ function provider(prepare?: (state: AppState) => void) {
           useState, useRef, useMemo: memo, useEffect, useCallback: (callback: unknown, deps: readonly unknown[]) => memo(() => callback, deps) };
         case 'react/jsx-runtime': return { jsx, jsxs: jsx };
         case '../i18n/core': return viI18n;
-        case 'react-native': return { AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) } };
+        case 'react-native': return { AppState: { get currentState() { return nativeState; }, addEventListener: (_event: string, listener: (status: string) => void) => {
+          foregroundListeners.add(listener); return { remove() { foregroundListeners.delete(listener); } };
+        } } };
         case 'expo-sqlite/kv-store': return { __esModule: true, default: { getItem: async () => null, setItem: async () => {} } };
         case '../data/seed': return { createInitialState };
         case '../services/accountAuth': return { accountAuth: auth.port, AccountAuthError: AuthFault };
@@ -128,7 +132,11 @@ function provider(prepare?: (state: AppState) => void) {
           } }, record: () => record, status: () => ({ ...status }), blocked: () => status.phase === 'conflict',
           open: async () => record,
           flush: async () => { io.cloudFlushes++; return sync(); },
-          refresh: async () => { io.cloudRefreshes++; return sync(); },
+          refresh: async () => {
+            io.cloudRefreshes++;
+            if (io.cloudIncoming) record = { ...record, state: clone(io.cloudIncoming) };
+            return sync();
+          },
           mail: async (action: { claimIds?: string[]; readIds?: string[]; deleteIds?: string[] }) => {
             io.cloudMail.push(action);
             for (const id of action.readIds ?? []) record.state = loginMailbox.readMail(record.state, id).state;
@@ -188,6 +196,7 @@ function provider(prepare?: (state: AppState) => void) {
     return context;
   };
   return { io, auth, clock, render, consume: () => exports.useApp(), disk: () => disk,
+    foreground: (status: string) => { nativeState = status; for (const listener of foregroundListeners) listener(status); },
     hydrate: async () => { render(); await flush(); render(); await flush(); return render(); } };
 }
 
@@ -217,6 +226,21 @@ test('manual sync and explicit cloud reload remain usable after hydration', asyn
   assert.equal(app.io.cloudRefreshes, before + 2);
   assert.equal(app.consume().syncStatus.phase, 'synced');
   assert.equal(app.consume().ready, true);
+});
+
+test('resuming a signed-in app refreshes incoming mailbox data without a manual save', async () => {
+  const app = provider(); await app.hydrate(); await flush(); app.render();
+  const before = app.io.cloudRefreshes;
+  app.foreground('background');
+  const incoming = clone(app.consume().state);
+  incoming.mailbox = [{ id: 'publisher-new-on-resume', source: 'publisher', sourceRef: 'publication-resume',
+    title: 'A new letter', body: '', createdAt: '2026-11-11T03:00:00Z', readAt: null, claimedAt: null, attachments: [] }];
+  app.io.cloudIncoming = incoming;
+  assert.equal(app.consume().state.mailbox.length, 0);
+  app.foreground('active'); await flush(); app.render();
+  assert.equal(app.io.cloudRefreshes, before + 1);
+  assert.equal(app.consume().state.mailbox[0]?.id, 'publisher-new-on-resume');
+  assert.equal(app.consume().state.mailbox[0]?.readAt, null, 'resuming must never mark a new letter as read');
 });
 
 test('temporary cloud failures retry automatically with 3/10/30-second backoff and stop after success', async () => {

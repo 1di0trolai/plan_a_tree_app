@@ -1,11 +1,7 @@
 /** Kiểm thử tích hợp kho trạng thái, tự động lưu và thử lại đồng bộ, xác thực cùng giao dịch kinh tế không bị lặp. */
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { test } from 'node:test';
-import { runInNewContext } from 'node:vm';
-import ts from 'typescript';
 import { createInitialState } from '../src/data/seed';
 import * as economyActions from '../src/store/economyActions';
 import { createEconomyTransactions } from '../src/store/economyTransactions';
@@ -21,10 +17,7 @@ import type { AppState } from '../src/types/app';
 import * as profilePreferences from '../src/utils/profilePreferences';
 import { accountAuthFixture, AuthFault } from './fixtures/accountAuthPort';
 import { viI18n } from './fixtures/i18nFixture';
-
-const compiled = ts.transpileModule(readFileSync(resolve(__dirname, '../src/store/AppStore.tsx'), 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
-}).outputText;
+import { loadStoreModule } from './fixtures/storeModuleLoader';
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const flush = async () => { for (let index = 0; index < 40; index++) await Promise.resolve(); };
@@ -42,7 +35,7 @@ function provider(prepare?: (state: AppState) => void) {
   prepare?.(initial);
   const auth = accountAuthFixture(initial);
   let disk: StoredUserData = { storageEpoch: FRESH_START_EPOCH, state: clone(initial), pendingPhotoCleanup: [] };
-  const hooks: { value: unknown; deps?: readonly unknown[]; cleanup?: () => void }[] = [];
+  const hooks: { value: unknown; deps?: readonly unknown[]; cleanup?: () => void; setter?: (value: unknown) => void }[] = [];
   let cursor = 0;
   let context: AppContextValue;
   const effects: (() => void)[] = [];
@@ -67,10 +60,14 @@ function provider(prepare?: (state: AppState) => void) {
     a !== undefined && b !== undefined && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
   const useState = <T>(initialValue: T | (() => T)) => {
     const index = cursor++;
-    hooks[index] ??= { value: typeof initialValue === 'function' ? (initialValue as () => T)() : initialValue };
-    return [hooks[index].value as T, (value: T | ((previous: T) => T)) => {
-      hooks[index].value = typeof value === 'function' ? (value as (previous: T) => T)(hooks[index].value as T) : value;
-    }] as const;
+    hooks[index] ??= {
+      value: typeof initialValue === 'function' ? (initialValue as () => T)() : initialValue,
+      // React giữ nguyên hàm setState giữa các lần render; hook được tách vẫn phải có cùng hành vi này.
+      setter: (value: unknown) => {
+        hooks[index].value = typeof value === 'function' ? (value as (previous: T) => T)(hooks[index].value as T) : value;
+      },
+    };
+    return [hooks[index].value as T, hooks[index].setter as (value: T | ((previous: T) => T)) => void] as const;
   };
   const useRef = <T>(initialValue: T) => {
     const index = cursor++;
@@ -95,13 +92,14 @@ function provider(prepare?: (state: AppState) => void) {
     }
   };
   const jsx = (_type: unknown, props: { value: AppContextValue }) => { context = props.value; return props; };
-  const exports = {} as { AppProvider: (props: { children: null }) => unknown; useApp: () => AppContextValue };
-  runInNewContext(compiled, {
-    exports, Error, console: { warn() {} }, setInterval: () => 1, clearInterval() {},
-    setTimeout: (run: () => void, delay: number) => {
-      const id = ++timerSequence; timers.set(id, { run, delay }); return id;
+  const exports = loadStoreModule<{ AppProvider: (props: { children: null }) => unknown; useApp: () => AppContextValue }>({
+    globals: {
+      Error, console: { warn() {} }, setInterval: () => 1, clearInterval() {},
+      setTimeout: (run: () => void, delay: number) => {
+        const id = ++timerSequence; timers.set(id, { run, delay }); return id;
+      },
+      clearTimeout: (id: number) => { timers.delete(id); },
     },
-    clearTimeout: (id: number) => { timers.delete(id); },
     require: (id: string) => {
       switch (id) {
         case 'react': return { createContext: () => ({ Provider: 'Provider' }), useContext: () => context,
@@ -197,10 +195,37 @@ function provider(prepare?: (state: AppState) => void) {
   };
   return { io, auth, clock, render, consume: () => exports.useApp(), disk: () => disk,
     foreground: (status: string) => { nativeState = status; for (const listener of foregroundListeners) listener(status); },
+    listenerCount: () => foregroundListeners.size,
+    unmount: () => { for (const hook of hooks) hook.cleanup?.(); },
     hydrate: async () => { render(); await flush(); render(); await flush(); return render(); } };
 }
 
 const order = { requestId: 'stable-purchase', itemId: 'berry-bites', quantity: 2 };
+
+test('unchanged renders keep the public context and its action callbacks stable', async () => {
+  const app = provider(); await app.hydrate(); await flush(); app.render(); await flush();
+  const before = app.render();
+  const after = app.render();
+  assert.equal(after, before, 'hook extraction must not invalidate the context without a value change');
+  for (const [name, action] of Object.entries(before)) {
+    if (typeof action === 'function') assert.equal(after[name as keyof AppContextValue], action, name);
+  }
+});
+
+test('unmount removes foreground subscriptions and pending automatic retry timers', async () => {
+  const app = provider(); await app.hydrate(); await flush(); app.render();
+  app.io.cloudFailure = { phase: 'offline', message: 'Temporary network outage', retryable: true };
+  app.consume().updateProfile({ title: 'Unmount while awaiting retry' });
+  app.render(); await flush(); app.render();
+  assert.ok(app.listenerCount() > 0);
+  assert.deepEqual(app.clock.delays(), [3_000]);
+  const refreshes = app.io.cloudRefreshes;
+  app.unmount();
+  assert.equal(app.listenerCount(), 0);
+  assert.deepEqual(app.clock.delays(), []);
+  app.foreground('background'); app.foreground('active'); await flush();
+  assert.equal(app.io.cloudRefreshes, refreshes, 'a removed provider must not refresh the account');
+});
 
 test('ordinary progress changes are saved locally and uploaded automatically without tapping Save', async () => {
   const app = provider(); await app.hydrate(); await flush(); app.render();
